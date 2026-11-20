@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+chimera/target/
+chimera/src/wasm/chimera.wasm
+*.log

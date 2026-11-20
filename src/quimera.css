@@ -1,0 +1,32 @@
+:root { background: #02070b; }
+body { min-width: 320px; margin: 0; background: #02070b; }
+#root { min-height: 100vh; }
+.quimera-app { box-sizing: border-box; display: grid; grid-template-rows: auto minmax(360px, 1fr) auto auto; gap: 12px; max-width: 1200px; min-height: 100vh; margin: 0 auto; padding: 16px; color: var(--text); }
+.quimera-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--frame); padding: 4px 4px 12px; }
+.quimera-header h1 { margin: 0; font: 20px var(--font); letter-spacing: .16em; text-transform: uppercase; }
+.quimera-kicker { margin: 0 0 6px; color: var(--amber); font: 10px "Archivo", sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+.quimera-note { max-width: 370px; margin: 0; color: var(--text-dim); font: 12px/1.5 "Archivo", sans-serif; text-align: right; }
+.quimera-stage { position: relative; display: grid; min-height: 360px; overflow: hidden; border: 1px solid var(--frame); background: radial-gradient(ellipse at 50% 30%, #10202a 0, #071017 44%, #02070b 80%); }
+.quimera-grid { position: absolute; inset: 0; opacity: .4; background-image: linear-gradient(rgba(79,182,242,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(79,182,242,.07) 1px, transparent 1px); background-size: 32px 32px; mask-image: linear-gradient(transparent, black 25%, black 80%, transparent); }
+.quimera-performer { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: end; min-height: 360px; padding-top: 12px; }
+.quimera-head { z-index: 2; width: min(62vw, 430px); height: clamp(240px, 45vh, 420px); }
+.quimera-head .anatomy { width: 100%; height: 100%; border: 0; background: transparent; }
+.quimera-neck { z-index: 1; width: 52px; height: 34px; margin-top: -28px; background: linear-gradient(90deg, #123044, #357193 48%, #123044); opacity: .72; }
+.quimera-body { position: relative; width: min(54vw, 360px); height: clamp(112px, 23vh, 190px); margin-top: -2px; transform-origin: 50% 0; filter: drop-shadow(0 0 12px rgba(79,182,242,.12)); }
+.quimera-shoulders { position: absolute; top: 0; left: 0; width: 100%; height: 55%; border: 1px solid rgba(79,182,242,.75); border-radius: 50% 50% 12% 12% / 72% 72% 14% 14%; background: linear-gradient(130deg, rgba(22,64,88,.8), rgba(7,18,25,.9) 52%, rgba(22,64,88,.8)); }
+.quimera-torso { position: absolute; top: 34%; left: 17%; width: 66%; height: 66%; border: 1px solid rgba(79,182,242,.45); border-top: 0; clip-path: polygon(0 0, 100% 0, 82% 100%, 18% 100%); background: linear-gradient(90deg, rgba(14,42,58,.8), rgba(4,13,19,.96) 50%, rgba(14,42,58,.8)); }
+.quimera-stage.is-speaking .quimera-body { animation: quimera-breath 2.3s ease-in-out infinite; }
+@keyframes quimera-breath { 0%, 100% { transform: translateY(0) scaleX(1); } 50% { transform: translateY(-3px) scaleX(1.012); } }
+.quimera-name { margin: 5px 0 28px; color: var(--amber); font: 10px "Archivo", sans-serif; letter-spacing: .18em; text-transform: uppercase; }
+.quimera-stage-caption { position: absolute; right: 14px; bottom: 12px; color: var(--text-dim); font: 9px "Archivo", sans-serif; letter-spacing: .12em; }
+.quimera-controls { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--frame); background: #03090d; }
+.quimera-text-label, .quimera-options label { color: var(--amber); font: 10px "Archivo", sans-serif; letter-spacing: .12em; text-transform: uppercase; }
+.quimera-controls textarea { box-sizing: border-box; width: 100%; resize: vertical; padding: 10px; border: 1px solid var(--frame); border-radius: 0; outline: none; background: #02070b; color: var(--text); font: 14px/1.5 "Archivo", sans-serif; }
+.quimera-controls textarea:focus { border-color: var(--blue); }
+.quimera-options { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.quimera-options label { display: grid; gap: 5px; }
+.quimera-options select { min-width: 170px; padding: 7px 9px; border: 1px solid var(--frame); border-radius: 0; background: #02070b; color: var(--text); font: 12px "Archivo", sans-serif; }
+.quimera-status { margin-left: auto; color: var(--green); font: 10px "Archivo", sans-serif; }
+.quimera-footer { padding: 2px; color: var(--text-dim); font: 9px "Archivo", sans-serif; letter-spacing: .09em; text-align: center; text-transform: uppercase; }
+.quimera-error { margin: 24px; color: var(--red); font: 14px "Archivo", sans-serif; }
+@media (max-width: 640px) { .quimera-app { grid-template-rows: auto minmax(320px, 50vh) auto auto; padding: 8px; } .quimera-header { align-items: start; flex-direction: column; gap: 8px; } .quimera-note { text-align: left; } .quimera-stage, .quimera-performer { min-height: 320px; } .quimera-head { width: min(85vw, 380px); height: 40vh; min-height: 220px; } .quimera-body { width: 72vw; height: 120px; } .quimera-options { align-items: stretch; } .quimera-options label { flex: 1 1 145px; } .quimera-options select { min-width: 0; } .quimera-status { width: 100%; margin: 4px 0 0; } }
