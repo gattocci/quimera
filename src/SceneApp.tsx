@@ -5,7 +5,7 @@ import { useStore } from "@chimera/ui/store.ts";
 import { Chip } from "@chimera/ui/components/Screen.tsx";
 import type { Lang, DialectPreset } from "@chimera/wasm/engine.ts";
 import { DIALECT_PRESETS } from "@chimera/wasm/engine.ts";
-import { RigScene } from "./RigScene.tsx";
+import { RigScene, type HeadLookName, type RigSceneHandle } from "./RigScene.tsx";
 import { ScenePlayer } from "./ScenePlayer.ts";
 import {
   DIALOGUE_SCENE,
@@ -16,10 +16,14 @@ import {
   type Scene,
 } from "./scene.ts";
 
-type AppMode = "free" | "scene";
+type AppMode = "scene" | "free";
 
 export function SceneApp() {
   const [mode, setMode] = useState<AppMode>("scene");
+
+  // ── Appearance & Camera ──
+  const [headLook, setHeadLook] = useState<HeadLookName>("classic");
+  const rigSceneRef = useRef<RigSceneHandle>(null);
 
   // ── Free mode state ──
   const [text, setText] = useState("Hola. Soy una voz hecha de aire.");
@@ -182,14 +186,61 @@ export function SceneApp() {
       {/* ── 3D Stage with RigScene ── */}
       <section className={`quimera-stage${speaking ? " is-speaking" : ""}`} aria-label="Escena 3D">
         <div className="quimera-grid" aria-hidden="true" />
+
+        {/* Floating 3D view controls toolbar */}
+        <div className="quimera-stage-bar">
+          <div className="quimera-look-picker">
+            <span className="quimera-bar-label">Cabeza:</span>
+            <button
+              type="button"
+              className={`quimera-look-btn${headLook === "classic" ? " is-active" : ""}`}
+              onClick={() => setHeadLook("classic")}
+              title="Estética anatómica clásica: anillos wireframe y tracto vocal visible"
+            >
+              Clásica
+            </button>
+            <button
+              type="button"
+              className={`quimera-look-btn${headLook === "vocal" ? " is-active" : ""}`}
+              onClick={() => setHeadLook("vocal")}
+              title="Malla densa con rasgos resaltados"
+            >
+              Vocal
+            </button>
+            <button
+              type="button"
+              className={`quimera-look-btn${headLook === "outside" ? " is-active" : ""}`}
+              onClick={() => setHeadLook("outside")}
+              title="Malla exterior con interior atenuado"
+            >
+              Piel
+            </button>
+          </div>
+
+          <div className="quimera-camera-tools">
+            <span className="quimera-camera-hint">🖱️ Arrastra para rotar · Rueda: zoom</span>
+            <button
+              type="button"
+              className="quimera-btn-reset-cam"
+              onClick={() => rigSceneRef.current?.resetCamera()}
+              title="Centrar y reajustar cámara a los personajes"
+            >
+              Centrar cámara
+            </button>
+          </div>
+        </div>
+
         <div className="quimera-stage-viewport">
           <RigScene
+            ref={rigSceneRef}
             characters={activeCharacters}
             activeCharacterId={activeCharacterId}
             activePosture={activePosture}
             speaking={speaking}
+            headLook={headLook}
             className="quimera-rig-canvas"
           />
+
           <div className="quimera-cast-labels" aria-hidden="true">
             {activeCharacters.map((c) => (
               <span
@@ -201,6 +252,7 @@ export function SceneApp() {
             ))}
           </div>
         </div>
+
         <span className="quimera-stage-caption">
           {speaking
             ? `HABLANDO: ${activeCharacters.find((c) => c.id === activeCharacterId)?.name ?? "PERSONAJE"} · POSTURA: ${activePosture.toUpperCase()}`
