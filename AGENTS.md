@@ -52,9 +52,9 @@ En un clon nuevo, configura el remoto oficial una sola vez (`origin` apunta al f
 git -C chimera remote add upstream https://github.com/jamesondh/chimera-vocal-synth.git
 ```
 
-Si `upstream` ya existe, verifica su URL en vez de volver a a?adirlo.
+Si `upstream` ya existe, verifica su URL en vez de volver a añadirlo.
 
-El pin inicial es `de56981c574dd5f34e3df2348145882559ceaca4`, rama `personal/speak-ui-experiment` del fork. Se eligi? porque contiene el soporte de español que usa el prototipo y que aún no est? en `upstream/main`. No muevas el pin a upstream hasta comprobar que ese soporte ya est? integrado y que la frase en español sigue funcionando.
+El pin actual es `03bb1155ee99592f2bd1fbaf646c728e4f03b9e2`, head del PR #81 de upstream (`Spanish: add rule-based speech and singing front end`). Se eligió porque contiene el soporte de español (con dialectos seseo, rioplatense y castellano) y la integración del body rig que consume Quimera. No muevas el pin a `upstream/main` hasta comprobar que ese PR ya esté integrado en main y que la pronunciación y el body rig sigan funcionando.
 
 1. Asegúrate de que el árbol de Quimera esté limpio (`git status --short --branch`). Si hay trabajo
    sin guardar, consérvalo antes de cambiar el pin.

@@ -18,10 +18,10 @@ API reutilizable para la cabeza, preservando la misma anatomía y su lectura de 
 ## Lo que añade este repo
 
 - una puesta en escena con uno o más personajes;
-- cuerpos estilizados, ropa y siluetas que no pretenden reproducir anatomía exacta;
+- el body rig de CHIMERA (`src/rig/`) usado como cuerpo del personaje; Quimera lo monta, no lo reimplementa;
 - acciones corporales sencillas: respirar, cambiar el peso, mirar al interlocutor, asentir, hacer
   un gesto, entrar o salir;
-- texto asignado a personajes y eventos de escena sincronizados con la voz;
+- texto asignado a personajes y eventos de escena sincronizados con la voz (`src/scene.ts`);
 - assets con licencias y atribuciones mantenidas por el proyecto compañero.
 
 La expresión debe venir sobre todo de la escena: turnos, pausas, miradas, composición, música y
@@ -29,14 +29,35 @@ gestos discretos. No hace falta un esqueleto facial complejo para cada personaje
 se puede simplificar el cuerpo y espaciar sus reacciones, pero el personaje que habla usa la cabeza
 completa de CHIMERA.
 
+## Estado actual (primer hito completado)
+
+El prototipo incluye:
+
+- **Body rig real** (`src/RigScene.tsx`): el rig de CHIMERA (`src/rig/`) puesto en escena con
+  Three.js. La cabeza se acopla al cuello del rig; la respiración anima el cuerpo mientras habla.
+- **Dialecto español** (`src/SceneApp.tsx`): selector de `Dialect` expuesto en la UI; los presets
+  son `neutro`, `rioplatense` y `castellano`, tal como los define CHIMERA.
+- **Formato de escena** (`src/scene.ts`): tipo `Scene` serializable con personajes, líneas y beats
+  de silencio. No depende de tipos internos de CHIMERA.
+- **Reproductor de escena** (`src/ScenePlayer.ts`): ejecuta una `Scene` línea a línea, respeta las
+  pausas y delega el habla a CHIMERA sin recalcular duración por caracteres.
+- **Modos de la UI**: "Libre" (texto único, control manual) y "Escena" (guión reproducible).
+
 ## Dependencia fijada
 
-`chimera/` es el fork de CHIMERA incorporado como Git submodule. El padre guarda un gitlink a un SHA específico; dos clones del mismo commit de Quimera obtienen la misma versión de CHIMERA. El pin actual (`03bb115`, PR #81 head) incluye el soporte de español con dialectos (seseo, rioplatense, castellano) y la API de body rig (`src/rig/`). Al actualizar, confirma primero que español y la API de la cabeza siguen presentes. No apuntes a `main` como dependencia sin fijar un commit y revisar el cambio. La inicialización, actualización normal, prueba de PR y resolución de conflictos están en [`../AGENTS.md`](../AGENTS.md).
+`chimera/` es el fork de CHIMERA incorporado como Git submodule. El padre guarda un gitlink a un
+SHA específico; dos clones del mismo commit de Quimera obtienen la misma versión de CHIMERA. El pin
+actual (`03bb115`, PR #81 head) incluye el soporte de español con dialectos (seseo, rioplatense,
+castellano) y la API de body rig (`src/rig/`). Al actualizar, confirma primero que español y la API
+de la cabeza siguen presentes. No apuntes a `main` como dependencia sin fijar un commit y revisar el
+cambio. La inicialización, actualización normal, prueba de PR y resolución de conflictos están en
+[`../AGENTS.md`](../AGENTS.md).
 
 El submódulo permite consumir hoy el código de UI que aún no se publica como biblioteca. La
 integración usa módulos internos de CHIMERA, así que puede requerir ajustes cuando cambie upstream.
 Ese acoplamiento está aceptado para el prototipo y debe quedar detrás de la capa de escena de
-Quimera. No proliferar imports del submódulo por todos los componentes.
+Quimera. No proliferar imports del submódulo por todos los componentes; el punto de entrada del rig
+es `src/RigScene.tsx` y el de la escena es `src/scene.ts`.
 
 ## Reloj y movimiento
 
@@ -52,19 +73,12 @@ los tiempos de la voz/planner o el reloj de reproducción de CHIMERA.
 Mantener los tipos de CHIMERA detrás de un adaptador cuando se pueda. Así se evita que el esquema de
 escena quede atado a detalles de telemetría que solo necesita la cabeza.
 
-## Primer hito
+## Opciones siguientes
 
-La primera prueba ejecutable contiene un personaje, un preset corporal, texto leído por CHIMERA,
-la cabeza 3D original y una animación corporal simple mientras habla. Es para comprobar que escena,
-audio y cabeza comparten pantalla y tiempo. No es todavía un formato de escenas persistente ni un
-editor de personajes.
-
-## Opciones futuras
-
-1. Guardar líneas, cuerpos, decorado y acciones como datos serializables de escena.
-2. Añadir unas pocas acciones de personaje y reacciones para el reparto.
-3. Si se necesita más variedad, diseñar presets de cuerpo y vestuario intercambiable.
-4. Añadir modelos GLB/animaciones de Blender solo si las siluetas simples dejan de ser suficientes;
+1. Añadir un segundo personaje a la escena y coordinar los turnos de habla.
+2. Añadir acciones de personaje con marca de tiempo: `nod`, `look-at`, `enter`, `exit`.
+3. Permitir cargar una `Scene` externa (JSON) desde el panel de controles.
+4. Añadir modelos GLB/animaciones de Blender solo si el body rig de CHIMERA no basta;
    comprobar la licencia de cada modelo, textura, ropa y clip.
 5. Medir coste con varios personajes antes de plantear muchas voces simultáneas; una cabeza 3D por
    voz también consume contextos WebGL y telemetría.
@@ -83,6 +97,8 @@ por Quimera.
 
 - [CHIMERA upstream](https://github.com/jamesondh/chimera-vocal-synth): motor, cabeza y evolución
   del contrato público.
+- [PR #81](https://github.com/jamesondh/chimera-vocal-synth/pull/81): Spanish front end (pin actual
+  de Quimera: `03bb115`).
 - [Moppet Choir](https://github.com/jessenaiman/moppets): ejemplo de proyecto compañero que fija
   CHIMERA como submódulo y agrega sus propios personajes, escena y clips de gesto.
 - [Cargo: dependencias Git fijadas](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html):
@@ -91,4 +107,4 @@ por Quimera.
   versión fijada por commit.
 - [Three.js GLTFLoader](https://threejs.org/docs/#examples/en/loaders/GLTFLoader) y
   [Blender glTF](https://docs.blender.org/manual/en/latest/addons/import_export/scene_gltf2.html):
-  opciones futuras para cuerpos modelados, no requisito para el primer hito.
+  opciones futuras para cuerpos modelados adicionales, no requisito para el hito actual.

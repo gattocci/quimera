@@ -2,11 +2,12 @@
 
 Experimento compañero para construir escenas y personajes alrededor de CHIMERA. CHIMERA conserva
 el motor de voz y su cabeza completa, incluido el tracto vocal animado y el lip-sync. Este proyecto
-añade el escenario, el cuerpo sencillo y la orquestación visual.
+añade el escenario, el body rig posable y la orquestación de escenas.
 
-La primera prueba es intencionadamente pequeña: un personaje, un cuerpo estilizado, texto leído
-por CHIMERA y un gesto corporal sutil mientras habla. No cambia pronunciación, planificación,
-articulación ni síntesis.
+El prototipo actual incluye un personaje con cuerpo posable (el body rig de CHIMERA), selector de
+dialecto español (neutro / rioplatense / castellano) y dos modos de UI: texto libre y escena
+reproducible (guión con turnos y pausas). No cambia pronunciación, planificación, articulación ni
+síntesis.
 
 ## Empezar
 
@@ -26,8 +27,8 @@ Si ya clonaste el repo sin traer el submódulo:
 git submodule update --init --recursive
 ```
 
-Abre la URL que imprime Vite y pulsa **Hablar** para iniciar el audio. El prototipo usa la cabeza
-3D original de CHIMERA. El cuerpo es una capa visual independiente y provisional.
+Abre la URL que imprime Vite y pulsa **Hablar** (modo Libre) o **Reproducir escena** (modo Escena)
+para iniciar el audio. El prototipo muestra el body rig de CHIMERA con la cabeza 3D original encima.
 
 ## Estructura
 
