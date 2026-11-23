@@ -1,15 +1,6 @@
 /**
  * ScenePlayer — runs a Scene: speaks each line through CHIMERA, waits between lines,
  * and reports back which event and character is active so the UI and 3D rig can adapt.
- *
- * Usage:
- *   const player = new ScenePlayer(scene);
- *   player.onProgress = (idx, charId, posture) => { ... };
- *   await player.play();
- *   player.stop();
- *
- * Scope: this only orchestrates *what* is said and *when*; it does not change
- * phonetics, prosody, or the head — that stays entirely inside CHIMERA.
  */
 import { PRESETS, defaultF0 } from "@chimera/ui/body.ts";
 import { speakText, speakingNow, stopSpeaking } from "@chimera/ui/speech.ts";
@@ -60,7 +51,7 @@ export class ScenePlayer {
       const ch = getCharacter(this.scene, ev.characterId);
       const { lang, dialectPreset } = lineVoiceParams(this.scene, ev);
       const body = PRESETS[ch.body];
-      const f0 = defaultF0(body);
+      const f0 = ch.f0 ?? defaultF0(body);
 
       state.setBody(body);
       state.setSource({ f0 });

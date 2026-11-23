@@ -29,24 +29,21 @@ gestos discretos. No hace falta un esqueleto facial complejo para cada personaje
 se puede simplificar el cuerpo y espaciar sus reacciones, pero el personaje que habla usa la cabeza
 completa de CHIMERA.
 
-## Estado actual (escena dialogada y cuerpo posable)
+## Estado actual (estudio de escenas, cuerpos y diálogo)
 
 El prototipo incluye:
 
-- **Body rig real y multi-personaje** (`src/RigScene.tsx`): hasta dos personajes en escena dentro
-  del mismo lienzo WebGL. Cada personaje tiene su propio body rig de CHIMERA (`src/rig/`) y cabeza 3D.
-- **Transiciones de postura y atención** (`src/poses.ts`): interpolación suave (lerp) entre posturas
-  (`neutral`, `attentive`, `relaxed`, `gesturing`). Cuando un personaje habla, el interlocutor gira
-  la cabeza y el torso para mirarlo y escucharlo; al finalizar la frase, ambos regresan al reposo.
-- **Dialecto español** (`src/SceneApp.tsx`): selector de `Dialect` expuesto en la UI; los presets
-  son `neutro`, `rioplatense` y `castellano`, tal como los define CHIMERA.
-- **Formato de escena serializable** (`src/scene.ts`): esquema `Scene` con personajes, líneas, pausas
-  y validación de esquema (`validateScene`). Incluye preajustes de diálogo a dos voces y soliloquio.
-- **Importación y exportación JSON**: carga de guiones externos en formato JSON directamente en el
-  navegador con validación estricta, y descarga del guión actual.
-- **Reproductor de escena** (`src/ScenePlayer.ts`): ejecuta una `Scene` línea a línea, respeta las
-  pausas y delega el habla a CHIMERA sin recalcular duración por caracteres.
-- **Modos de la UI**: "Escena & Diálogo" (guión interactivo con selección de preset) y "Voz Libre".
+- **Modos de representación del cuerpo** (`src/RigScene.tsx`):
+  - *Cabeza sola (CHIMERA puro)*: suprime la malla densa del cuerpo; las cabezas flotan y conservan toda su física anatómica, respiración, giros mutuos y lip-sync.
+  - *Silueta etérea*: sombra sutil translúcida que da anclaje corporal sin opacar los órganos de la cabeza.
+  - *Malla rig*: visualización técnica completa del esqueleto y quads.
+- **Estudio Creativo integrado** (`src/SceneApp.tsx`):
+  - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario y color de acento.
+  - *Editor de guiones y sentimientos*: agregar, editar, reordenar y eliminar líneas y pausas; asignación de actitudes por réplica (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).
+- **Atmósferas escénicas**: modos *Vacío* (negro profundo de alto contraste), *Rejilla* (cibernético) y *Foco* (iluminación cenital).
+- **Cámara interactiva** (`OrbitControls`): rotación 360°, zoom hacia los órganos vocales y recentrado con un clic.
+- **Dialectos y síntesis**: español con dialectos (neutro, rioplatense, castellano) y compatibilidad con inglés y turco.
+- **Formato y serialización**: importación y exportación inmediata en formato JSON estándar.
 
 ## Dependencia fijada
 

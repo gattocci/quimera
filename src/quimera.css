@@ -6,15 +6,20 @@ body { min-width: 320px; margin: 0; background: #02070b; }
 .quimera-header h1 { margin: 0; font: 20px var(--font); letter-spacing: .16em; text-transform: uppercase; }
 .quimera-kicker { margin: 0 0 6px; color: var(--amber); font: 10px "Archivo", sans-serif; letter-spacing: .14em; text-transform: uppercase; }
 .quimera-note { max-width: 370px; margin: 0; color: var(--text-dim); font: 12px/1.5 "Archivo", sans-serif; text-align: right; }
-.quimera-stage { position: relative; display: flex; flex-direction: column; min-height: 420px; overflow: hidden; border: 1px solid var(--frame); background: radial-gradient(ellipse at 50% 35%, #07151e 0, #03080d 50%, #010406 90%); }
+.quimera-stage { position: relative; display: flex; flex-direction: column; min-height: 440px; overflow: hidden; border: 1px solid var(--frame); transition: background .3s; }
+.quimera-stage.atmo-void { background: #000204; }
+.quimera-stage.atmo-grid { background: radial-gradient(ellipse at 50% 35%, #07151e 0, #03080d 50%, #010406 90%); }
+.quimera-stage.atmo-spotlight { background: radial-gradient(circle at 50% 25%, #0e2736 0, #03080d 55%, #000102 90%); }
+.quimera-spotlight { position: absolute; top: -50px; left: 50%; transform: translateX(-50%); width: 340px; height: 340px; border-radius: 50%; background: radial-gradient(circle, rgba(79, 182, 242, 0.12) 0%, transparent 70%); pointer-events: none; filter: blur(20px); }
+.quimera-stage.atmo-void .quimera-grid { display: none; }
 .quimera-grid { position: absolute; inset: 0; opacity: .25; pointer-events: none; background-image: linear-gradient(rgba(79,182,242,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(79,182,242,.05) 1px, transparent 1px); background-size: 32px 32px; mask-image: linear-gradient(transparent, black 25%, black 80%, transparent); }
 .quimera-stage-bar { position: absolute; top: 10px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; z-index: 10; pointer-events: none; gap: 8px; flex-wrap: wrap; }
-.quimera-look-picker, .quimera-camera-tools { display: flex; align-items: center; gap: 6px; pointer-events: auto; background: rgba(2, 7, 11, 0.75); border: 1px solid rgba(79, 182, 242, 0.2); padding: 3px 8px; border-radius: 2px; }
-.quimera-bar-label { color: var(--amber); font: 9px "Archivo", sans-serif; letter-spacing: .1em; text-transform: uppercase; }
-.quimera-look-btn { padding: 2px 7px; border: 1px solid transparent; background: transparent; color: var(--text-dim); font: 10px "Archivo", sans-serif; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; transition: all .15s; }
-.quimera-look-btn:hover { color: var(--text); }
-.quimera-look-btn.is-active { color: var(--blue); border-color: var(--blue); background: rgba(79, 182, 242, 0.12); }
-.quimera-camera-hint { color: var(--text-dim); font: 10px "Archivo", sans-serif; }
+.quimera-tool-group { display: flex; align-items: center; gap: 4px; pointer-events: auto; background: rgba(2, 7, 11, 0.85); border: 1px solid rgba(79, 182, 242, 0.2); padding: 3px 6px; border-radius: 2px; }
+.quimera-bar-label { color: var(--amber); font: 9px "Archivo", sans-serif; letter-spacing: .1em; text-transform: uppercase; margin-right: 2px; }
+.quimera-tool-btn { padding: 2px 7px; border: 1px solid transparent; background: transparent; color: var(--text-dim); font: 10px "Archivo", sans-serif; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; transition: all .15s; }
+.quimera-tool-btn:hover { color: var(--text); }
+.quimera-tool-btn.is-active { color: var(--blue); border-color: var(--blue); background: rgba(79, 182, 242, 0.14); font-weight: 500; }
+.quimera-camera-hint { color: var(--text-dim); font: 10px "Archivo", sans-serif; margin-right: 4px; }
 .quimera-btn-reset-cam { padding: 2px 8px; border: 1px solid var(--frame); background: rgba(79, 182, 242, 0.08); color: var(--text-dim); font: 10px "Archivo", sans-serif; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; transition: all .15s; }
 .quimera-btn-reset-cam:hover { color: #fff; border-color: var(--blue); background: rgba(79, 182, 242, 0.22); }
 .quimera-stage-viewport { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 400px; flex: 1; }
@@ -55,4 +60,46 @@ body { min-width: 320px; margin: 0; background: #02070b; }
 .quimera-line-text { color: var(--text); font: 13px/1.5 "Archivo", sans-serif; }
 .quimera-beat { padding: 2px 10px; color: var(--text-dim); font: 9px "Archivo", sans-serif; letter-spacing: .1em; text-transform: uppercase; }
 .quimera-beat.is-active { color: var(--blue); }
+.quimera-btn-accent { color: var(--blue) !important; border-color: rgba(79, 182, 242, 0.4) !important; font-weight: 600; }
+.quimera-input-text { padding: 5px 8px; border: 1px solid var(--frame); background: #02070b; color: var(--text); font: 12px "Archivo", sans-serif; min-width: 220px; }
+/* Studio Mode */
+.quimera-studio-deck { display: grid; gap: 12px; }
+.quimera-studio-grid { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.4fr); gap: 12px; }
+.quimera-studio-panel { border: 1px solid var(--frame); background: #02070b; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.quimera-panel-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--frame); padding-bottom: 8px; }
+.quimera-panel-header h3 { margin: 0; font: 12px "Archivo", sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--amber); }
+.quimera-panel-actions { display: flex; gap: 6px; }
+.quimera-btn-small { padding: 4px 8px; border: 1px solid var(--frame); background: rgba(79, 182, 242, 0.08); color: var(--text); font: 10px "Archivo", sans-serif; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; transition: all .15s; }
+.quimera-btn-small:hover { background: rgba(79, 182, 242, 0.2); border-color: var(--blue); }
+.quimera-btn-danger { padding: 2px 6px; border: 1px solid rgba(240, 78, 78, 0.4); background: rgba(240, 78, 78, 0.08); color: var(--red); font: 10px "Archivo", sans-serif; cursor: pointer; transition: all .15s; }
+.quimera-btn-danger:hover { background: rgba(240, 78, 78, 0.25); border-color: var(--red); color: #fff; }
+.quimera-btn-icon { padding: 2px 6px; border: 1px solid var(--frame); background: #02070b; color: var(--text-dim); font: 9px "Archivo", sans-serif; cursor: pointer; }
+.quimera-btn-icon:hover:not(:disabled) { color: var(--text); border-color: var(--blue); }
+.quimera-btn-icon:disabled { opacity: 0.3; cursor: not-allowed; }
+/* Character Cards */
+.quimera-character-cards { display: grid; gap: 8px; max-height: 480px; overflow-y: auto; padding-right: 4px; }
+.quimera-char-card { border: 1px solid var(--frame); border-left-width: 4px; background: rgba(2, 7, 11, 0.9); padding: 8px; display: grid; gap: 8px; }
+.quimera-char-card-row { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.quimera-field { display: grid; gap: 3px; font: 9px "Archivo", sans-serif; color: var(--text-dim); letter-spacing: .08em; text-transform: uppercase; flex: 1 1 110px; }
+.quimera-field input[type="text"], .quimera-field select { padding: 4px 6px; border: 1px solid var(--frame); background: #02070b; color: var(--text); font: 11px "Archivo", sans-serif; }
+.quimera-field input[type="range"] { accent-color: var(--blue); cursor: pointer; }
+.quimera-field-color { flex: 0 0 45px; }
+.quimera-field-color input[type="color"] { width: 100%; height: 26px; padding: 0; border: 1px solid var(--frame); background: transparent; cursor: pointer; }
+/* Events Editor */
+.quimera-events-editor { display: grid; gap: 8px; max-height: 480px; overflow-y: auto; padding-right: 4px; }
+.quimera-editor-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid var(--frame); background: rgba(2, 7, 11, 0.8); }
+.quimera-editor-row.is-beat-row { background: rgba(79, 182, 242, 0.03); border-style: dashed; }
+.quimera-row-num { color: var(--text-dim); font: 10px "Archivo", sans-serif; min-width: 18px; padding-top: 4px; }
+.quimera-line-editor { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.quimera-line-editor-top { display: flex; gap: 8px; flex-wrap: wrap; }
+.quimera-char-select, .quimera-posture-select { padding: 4px 8px; border: 1px solid var(--frame); background: #02070b; color: var(--amber); font: 11px "Archivo", sans-serif; }
+.quimera-posture-select { color: var(--blue); }
+.quimera-line-textarea { width: 100%; box-sizing: border-box; padding: 6px; border: 1px solid var(--frame); background: #02070b; color: var(--text); font: 12px/1.4 "Archivo", sans-serif; resize: vertical; }
+.quimera-line-textarea:focus { border-color: var(--blue); outline: none; }
+.quimera-beat-editor { display: flex; align-items: center; gap: 10px; flex: 1; flex-wrap: wrap; }
+.quimera-beat-input { padding: 4px 6px; border: 1px solid var(--frame); background: #02070b; color: var(--text); font: 11px "Archivo", sans-serif; width: 140px; }
+.quimera-beat-dur { display: flex; align-items: center; gap: 4px; color: var(--text-dim); font: 10px "Archivo", sans-serif; text-transform: uppercase; }
+.quimera-beat-dur input { width: 50px; padding: 3px 5px; border: 1px solid var(--frame); background: #02070b; color: var(--text); font: 11px "Archivo", sans-serif; }
+.quimera-row-tools { display: flex; flex-direction: column; gap: 3px; }
+@media (max-width: 900px) { .quimera-studio-grid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .quimera-app { grid-template-rows: auto minmax(320px, 50vh) auto auto; padding: 8px; } .quimera-header { align-items: start; flex-direction: column; gap: 8px; } .quimera-note { text-align: left; } .quimera-stage, .quimera-performer { min-height: 320px; } .quimera-rig-canvas { width: min(85vw, 380px); height: 40vh; min-height: 220px; } .quimera-options { align-items: stretch; } .quimera-options label { flex: 1 1 145px; } .quimera-options select { min-width: 0; } .quimera-status { width: 100%; margin: 4px 0 0; } .quimera-line { grid-template-columns: 1fr; } }

@@ -1,14 +1,10 @@
 /**
- * Quimera scene format — a minimal, serializable description of a scene.
+ * Quimera scene format — serializable description of a scene and its performers.
  *
- * Rules:
- * - Everything here stays in Quimera scope: no CHIMERA internals leak into this schema.
- * - The scene describes *who speaks* and *when*; it does not rewrite phonetics or prosody.
- * - Body presets and dialogue are the two moving parts at this stage.
- * - Action timing is scene-relative (seconds). Exact voice timing comes from CHIMERA's planner;
- *   the scene player must not compute duration from character count.
- *
- * Version is a plain integer bumped on every breaking schema change.
+ * Capabilities:
+ * - Full character customization (voice body, base pitch f0, dialect, accent color, stageX, bodyStyle).
+ * - Rich dialogue lines with posture/feeling hints and precise pause/beat timings.
+ * - Global stage appearance (bodyStyle: head-only, ethereal, mesh; atmosphere: void, grid, spotlight).
  */
 
 import type { Lang, DialectPreset } from "@chimera/wasm/engine.ts";
@@ -16,8 +12,13 @@ import type { BodyName } from "@chimera/wasm/../../src/worklet/protocol.ts";
 
 // ──────────────────────────────────────────── types ──────────────────────────
 
-/** Which body preset a character uses for their voice and rig. */
 export type BodyPreset = BodyName; // "male" | "female" | "child"
+
+/** Body presentation style: head only (pure CHIMERA), ethereal ghost, or complete mesh. */
+export type BodyStyle = "head-only" | "ethereal" | "mesh";
+
+/** Stage visual atmosphere / backdrop. */
+export type StageAtmosphere = "void" | "grid" | "spotlight";
 
 /** A character defined in the scene roster. */
 export interface Character {
@@ -26,13 +27,29 @@ export interface Character {
   /** Display name shown in the scene. */
   name: string;
   body: BodyPreset;
-  /** Language and dialect used when speaking (overridden per line if set there). */
+  /** Language and dialect used when speaking. */
   lang: Lang;
   dialectPreset?: DialectPreset;
+  /** Custom baseline pitch in Hz (optional). */
+  f0?: number;
+  /** Accent color in hex for visual distinction (e.g. #4fb6f2, #ffb347). */
+  color?: string;
+  /** Position on stage X-axis in body cm (-80 to 80). */
+  stageX?: number;
+  /** Custom body style per character (overrides scene default if set). */
+  bodyStyle?: BodyStyle;
 }
 
-/** Broad body posture hint for the rig while speaking or idle. */
-export type PostureHint = "neutral" | "attentive" | "relaxed" | "gesturing";
+/** Posture and emotion hints for performers. */
+export type PostureHint =
+  | "neutral"
+  | "attentive"
+  | "relaxed"
+  | "gesturing"
+  | "curious"
+  | "emphatic"
+  | "thoughtful"
+  | "agreement";
 
 /** A single line of dialogue assigned to a character. */
 export interface SceneLine {
@@ -41,9 +58,9 @@ export interface SceneLine {
   /** Override the character's default language for this line only. */
   lang?: Lang;
   dialectPreset?: DialectPreset;
-  /** Desired posture during this line (rig uses it as a hint for the pose). */
+  /** Emotional posture or attitude during this line. */
   posture?: PostureHint;
-  /** Pause (seconds) to wait before speaking this line (after the previous one ends). */
+  /** Pause (seconds) to wait before speaking this line. */
   pauseBefore?: number;
 }
 
@@ -60,30 +77,28 @@ export type SceneEvent = SceneLine | SceneBeat;
 export interface Scene {
   version: 1;
   title: string;
+  stageBodyStyle?: BodyStyle;
+  stageAtmosphere?: StageAtmosphere;
   characters: Character[];
   events: SceneEvent[];
 }
 
 // ──────────────────────────────────────────── helpers ────────────────────────
 
-/** Type guard: tells a SceneLine from a SceneBeat. */
 export function isLine(e: SceneEvent): e is SceneLine {
   return !("kind" in e);
 }
 
-/** Type guard: tells a SceneBeat from a SceneLine. */
 export function isBeat(e: SceneEvent): e is SceneBeat {
   return "kind" in e && e.kind === "beat";
 }
 
-/** Look up a character by id; throws if not found. */
 export function getCharacter(scene: Scene, id: string): Character {
   const ch = scene.characters.find((c) => c.id === id);
   if (!ch) throw new Error(`Scene: unknown character "${id}"`);
   return ch;
 }
 
-/** Resolve the language and dialect for a line (line > character defaults). */
 export function lineVoiceParams(scene: Scene, line: SceneLine): {
   lang: Lang;
   dialectPreset: DialectPreset | undefined;
@@ -97,7 +112,6 @@ export function lineVoiceParams(scene: Scene, line: SceneLine): {
 
 /**
  * Validates untrusted parsed JSON data as a valid Scene.
- * Throws a descriptive Error if validation fails.
  */
 export function validateScene(data: unknown): Scene {
   if (!data || typeof data !== "object") {
@@ -159,10 +173,12 @@ export function validateScene(data: unknown): Scene {
 
 // ──────────────────────────────────────────── presets ────────────────────────
 
-/** Escena 1: Diálogo entre dos personajes con dialectos y posturas diferentes. */
+/** Diálogo expresivo a dos voces con sentimientos e intenciones. */
 export const DIALOGUE_SCENE: Scene = {
   version: 1,
   title: "Diálogo: Aria & Dante",
+  stageBodyStyle: "head-only",
+  stageAtmosphere: "void",
   characters: [
     {
       id: "aria",
@@ -170,6 +186,10 @@ export const DIALOGUE_SCENE: Scene = {
       body: "female",
       lang: "es",
       dialectPreset: "neutro",
+      f0: 210,
+      color: "#4fb6f2",
+      stageX: -46,
+      bodyStyle: "head-only",
     },
     {
       id: "dante",
@@ -177,39 +197,45 @@ export const DIALOGUE_SCENE: Scene = {
       body: "male",
       lang: "es",
       dialectPreset: "rioplatense",
+      f0: 115,
+      color: "#ffb347",
+      stageX: 46,
+      bodyStyle: "head-only",
     },
   ],
   events: [
     {
       characterId: "aria",
-      text: "Hola Dante. Qué bueno verte en el escenario.",
-      posture: "attentive",
+      text: "Hola Dante. ¿Notás lo limpias que se ven ahora nuestras cabezas?",
+      posture: "curious",
     },
-    { kind: "beat", label: "pausa", durationS: 0.5 },
+    { kind: "beat", label: "pausa reflexiva", durationS: 0.5 },
     {
       characterId: "dante",
-      text: "Hola Aria. Escuchá cómo suenan nuestras voces en escena.",
-      posture: "gesturing",
+      text: "Totalmente. Sin mallas pesadas, la anatomía vocal vuelve a ser la protagonista.",
+      posture: "agreement",
     },
     { kind: "beat", label: "pausa", durationS: 0.4 },
     {
       characterId: "aria",
-      text: "Cada uno con su cuerpo y su entonación natural.",
-      posture: "relaxed",
+      text: "Podemos mirarnos, asentir y modular cada frase con su propio sentimiento.",
+      posture: "gesturing",
     },
     { kind: "beat", label: "pausa", durationS: 0.4 },
     {
       characterId: "dante",
-      text: "Y al terminar la frase, ambos volvemos al reposo.",
-      posture: "attentive",
+      text: "Exacto. Cada voz tiene su aire, su espacio y su presencia en la escena.",
+      posture: "emphatic",
     },
   ],
 };
 
-/** Escena 2: Soliloquio individual. */
+/** Soliloquio expresivo individual. */
 export const SOLILOQUY_SCENE: Scene = {
   version: 1,
   title: "Soliloquio: Aria",
+  stageBodyStyle: "head-only",
+  stageAtmosphere: "spotlight",
   characters: [
     {
       id: "aria",
@@ -217,28 +243,31 @@ export const SOLILOQUY_SCENE: Scene = {
       body: "female",
       lang: "es",
       dialectPreset: "neutro",
+      f0: 205,
+      color: "#4fb6f2",
+      stageX: 0,
+      bodyStyle: "head-only",
     },
   ],
   events: [
     {
       characterId: "aria",
-      text: "Hola. Soy una voz hecha de aire.",
+      text: "Hola. Soy una voz hecha de aire y resonancia.",
       posture: "attentive",
     },
-    { kind: "beat", label: "pausa", durationS: 0.5 },
+    { kind: "beat", label: "silencio", durationS: 0.5 },
     {
       characterId: "aria",
-      text: "El cuerpo ahora se mueve en tres dimensiones mientras hablo.",
-      posture: "gesturing",
+      text: "¿Puedes ver cómo se mueve mi lengua y la mandíbula en tres dimensiones?",
+      posture: "curious",
     },
-    { kind: "beat", label: "pausa", durationS: 0.4 },
+    { kind: "beat", label: "silencio", durationS: 0.4 },
     {
       characterId: "aria",
-      text: "Todo el sonido y los articuladores provienen directamente de CHIMERA.",
-      posture: "relaxed",
+      text: "Toda la física vocal proviene íntegra de CHIMERA.",
+      posture: "thoughtful",
     },
   ],
 };
 
-/** Escena por defecto al abrir la aplicación. */
 export const DEMO_SCENE = DIALOGUE_SCENE;

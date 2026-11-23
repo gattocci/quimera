@@ -5,11 +5,12 @@ el motor de voz y su cabeza completa, incluido el tracto vocal animado y el lip-
 añade el escenario, el body rig posable y la orquestación de escenas.
 
 El prototipo actual incluye:
-- Escena compartida con uno o dos personajes en 3D con body rig posable de CHIMERA.
-- Miradas mutuas e interpolación de posturas (atento, relajado, gesticulando) entre turnos de habla.
-- Selector de dialecto español (neutro / rioplatense / castellano).
-- Formato de escena serializable con importación/exportación de archivos JSON.
-- Dos modos de UI: Escena & Diálogo (guiones con turnos y pausas) y Voz Libre (control manual).
+- **Estética a medida**: opción de *Cabeza sola* (CHIMERA original limpio sin malla), *Silueta etérea* translúcida o *Malla de rig*.
+- **Estudio Creativo interactivo**: creador de personajes (voz, tono f0, dialecto, posición X, color) y editor de diálogo en tiempo real.
+- **Sentimientos y posturas**: réplicas con intención corporal (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).
+- **Cámara 3D libre**: órbita 360°, zoom hacia los órganos vocales y recentrado automático.
+- **Atmósferas escénicas**: modos de iluminación (*Vacío, Rejilla, Foco cenital*).
+- **Formato de escena serializable**: importación y exportación instantánea en JSON.
 No cambia pronunciación, planificación, articulación ni síntesis.
 
 ## Empezar

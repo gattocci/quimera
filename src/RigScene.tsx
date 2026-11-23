@@ -3,13 +3,16 @@
  *
  * Capabilities:
  *  - 1 or 2 performers with individual body rigs, voices, and 3D heads.
- *  - Interactive 3D camera (OrbitControls): rotate, zoom, and pan around the performers.
+ *  - Body style modes:
+ *      * "head-only": Pure CHIMERA standalone head floating in space, zero body clutter.
+ *      * "ethereal": Soft, translucent silhouette that anchors the head gently without competing.
+ *      * "mesh": Complete technical wireframe rig.
  *  - Restores the iconic CHIMERA anatomic wireframe aesthetic ("classic" look: cyan contour loops,
  *    glowing orange jaw, vivid airway, tongue, and larynx).
- *  - Dynamic posture transitions (lerp) based on speech state and PostureHints.
+ *  - Interactive 3D camera (OrbitControls): rotate, zoom, and pan around the performers.
+ *  - Emotion & intention transitions (curious, emphatic, thoughtful, agreement, etc.).
  *  - Interlocutor gaze tracking: listeners turn toward speakers.
  *  - Live articulatory lip-sync + telemetry for the active speaker.
- *  - High-performance WebGL renderer with LinearSRGB color space.
  */
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
@@ -18,7 +21,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { TelemetryMessage } from "@chimera/wasm/../../src/worklet/protocol.ts";
 import { engine } from "@chimera/audio/AudioEngine.ts";
 import { useStore } from "@chimera/ui/store.ts";
-import type { Character, PostureHint } from "./scene.ts";
+import type { BodyStyle, Character, PostureHint } from "./scene.ts";
 import { POSTURE_PRESETS, listeningPose, lerpPose, clonePose } from "./poses.ts";
 import type { Pose } from "@chimera/rig/pose.ts";
 
@@ -34,6 +37,7 @@ export interface RigSceneProps {
   activePosture?: PostureHint;
   speaking: boolean;
   headLook?: HeadLookName;
+  bodyStyle?: BodyStyle;
   className?: string;
 }
 
@@ -50,6 +54,12 @@ interface PerformerInstance {
   baseTurn: number;
 }
 
+const ETHEREAL_LOOK = {
+  fill: [0.001, 0.003, 0.006] as [number, number, number],
+  line: [0.02, 0.12, 0.24] as [number, number, number],
+  edge: [0.01, 0.05, 0.12] as [number, number, number],
+};
+
 export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigScene(
   {
     characters,
@@ -57,6 +67,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
     activePosture = "attentive",
     speaking,
     headLook = "classic",
+    bodyStyle = "head-only",
     className,
   },
   ref
@@ -64,14 +75,13 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const resetCameraRef = useRef<(() => void) | null>(null);
 
-  // Expose imperative handle so parent can trigger camera reset
   useImperativeHandle(ref, () => ({
     resetCamera: () => {
       resetCameraRef.current?.();
     },
   }));
 
-  // Live refs for render loop
+  // Live refs for animation loop
   const charactersRef = useRef(characters);
   charactersRef.current = characters;
   const activeCharRef = useRef(activeCharacterId);
@@ -82,6 +92,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
   speakingRef.current = speaking;
   const headLookRef = useRef(headLook);
   headLookRef.current = headLook;
+  const bodyStyleRef = useRef(bodyStyle);
+  bodyStyleRef.current = bodyStyle;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -99,11 +111,10 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(30, 1, 5, 5000);
 
-    // OrbitControls for full interactive camera exploration
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.minDistance = 50;
+    controls.minDistance = 40;
     controls.maxDistance = 650;
     controls.enablePan = true;
     controls.panSpeed = 0.8;
@@ -118,7 +129,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       const [
         { Rig },
         { wearHead, HEAD_LOOKS },
-        { RigView },
+        { RigView, CHIMERA_LOOK },
         { VoiceModel },
         { PRESETS: BODY_PRESETS },
         { REST_ARTIC },
@@ -135,11 +146,11 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       const chars = charactersRef.current;
       const isDual = chars.length > 1;
 
-      // Camera initial framing: bring performers closer and center them beautifully
+      // Camera initial framing: center right at the performers' faces
       const defaultTarget = isDual ? new THREE.Vector3(0, 142, 0) : new THREE.Vector3(0, 145, 0);
       const defaultPosition = isDual
-        ? new THREE.Vector3(0, 146, 220)
-        : new THREE.Vector3(12, 148, 135);
+        ? new THREE.Vector3(0, 146, 215)
+        : new THREE.Vector3(12, 148, 130);
 
       const applyCameraReset = () => {
         camera.position.copy(defaultPosition);
@@ -158,21 +169,22 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
         const voiceBody = BODY_PRESETS[ch.body] ?? BODY_PRESETS.female;
         const model = new VoiceModel(voiceBody, 48000);
 
-        // Mount head with the selected anatomical look (default: classic wireframe)
         const head = wearHead(rig, model, { look: lookConfig });
         const view = new RigView(rig);
 
-        // Refine body wireframe look to elegantly accompany the head
-        view.toneChanged();
+        // Position on stage
+        const defaultX = isDual ? (i === 0 ? -48 : 48) : 0;
+        const posX = ch.stageX ?? defaultX;
+        const baseTurn = isDual ? (posX < 0 ? -12 : 12) : 0;
 
         const group = new THREE.Group();
         group.add(view.group, head.mount);
-
-        // Position: dual layout (standing slightly turned toward each other) or single centered
-        const posX = isDual ? (i === 0 ? -48 : 48) : 0;
-        const baseTurn = isDual ? (i === 0 ? -12 : 12) : 0;
         group.position.set(posX, 0, 0);
         scene.add(group);
+
+        // Apply body style visibility and shader params
+        const effectiveBodyStyle = ch.bodyStyle ?? bodyStyleRef.current;
+        applyBodyStyleToView(view, effectiveBodyStyle, CHIMERA_LOOK);
 
         const initialPose = clonePose(POSTURE_PRESETS.neutral);
         initialPose.body.turn = baseTurn;
@@ -199,13 +211,14 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       let breathT = 0;
       let last = performance.now();
       let lastAppliedLook = headLookRef.current;
+      let lastAppliedStyle = bodyStyleRef.current;
 
       renderer.setAnimationLoop((now) => {
         const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
         last = now;
         breathT += dt;
 
-        // Check if headLook has changed dynamically
+        // Dynamic headLook switch
         const currentLook = headLookRef.current;
         if (currentLook !== lastAppliedLook) {
           lastAppliedLook = currentLook;
@@ -213,6 +226,16 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           for (const p of performers) {
             p.head.setLook(targetLook);
             p.view.toneChanged();
+          }
+        }
+
+        // Dynamic bodyStyle switch
+        const currentStyle = bodyStyleRef.current;
+        if (currentStyle !== lastAppliedStyle) {
+          lastAppliedStyle = currentStyle;
+          for (const p of performers) {
+            const ch = charactersRef.current.find((c) => c.id === p.id);
+            applyBodyStyleToView(p.view, ch?.bodyStyle ?? currentStyle, CHIMERA_LOOK);
           }
         }
 
@@ -228,34 +251,44 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           const isCurrentSpeaker = hasSpeaker && p.id === activeId;
           const isSolo = performers.length === 1;
 
-          // Compute target posture
+          // Compute target posture based on emotion / intent
           let target: Pose;
           if (isCurrentSpeaker) {
             target = clonePose(POSTURE_PRESETS[postureKey] ?? POSTURE_PRESETS.attentive);
             target.body.turn += p.baseTurn * 0.5;
-            // subtle speech nod & breathe
-            target.neck.flex += Math.sin(breathT * 0.35 * Math.PI * 2) * 1.5;
-            target.spine.flex += Math.sin(breathT * 0.7 * Math.PI * 2) * 0.6;
+
+            // Expressive speech oscillations based on attitude
+            if (postureKey === "agreement") {
+              target.neck.flex += Math.sin(breathT * 1.8 * Math.PI * 2) * 2.8;
+            } else if (postureKey === "emphatic") {
+              target.neck.flex += Math.sin(breathT * 0.9 * Math.PI * 2) * 2.2;
+              target.spine.flex += Math.sin(breathT * 0.9 * Math.PI * 2) * 1.0;
+            } else if (postureKey === "curious") {
+              target.neck.bend += Math.sin(breathT * 0.3 * Math.PI * 2) * 2.0;
+            } else {
+              target.neck.flex += Math.sin(breathT * 0.35 * Math.PI * 2) * 1.5;
+              target.spine.flex += Math.sin(breathT * 0.7 * Math.PI * 2) * 0.6;
+            }
           } else if (hasSpeaker && !isSolo) {
-            // Listener turns toward the active speaker
+            // Listener turns toward interlocutor
             const otherIndex = performers.findIndex((x) => x.id === activeId);
             const side: -1 | 1 = otherIndex > i ? 1 : -1;
             target = listeningPose(side);
             target.body.turn += p.baseTurn;
             target.spine.flex += Math.sin(breathT * 0.4 * Math.PI * 2) * 0.3;
           } else {
-            // Idle resting posture
+            // Resting state
             target = clonePose(POSTURE_PRESETS.neutral);
             target.body.turn += p.baseTurn;
             target.spine.flex += Math.sin(breathT * 0.45 * Math.PI * 2) * 0.4;
           }
 
-          // Smooth interpolation towards target pose
+          // Smooth frame-by-frame interpolation
           p.currentPose = lerpPose(p.currentPose, target, Math.min(1, dt * 4.5));
           p.rig.pose(p.currentPose);
           p.rig.skin(p.skinned);
 
-          // Articulation: only the speaker articulates live speech
+          // Articulation: only active speaker moves speech articulators
           const store = useStore.getState();
           const artic = isCurrentSpeaker && store.started ? store.artic : REST_ARTIC;
           const tele = isCurrentSpeaker ? lastTele : null;
@@ -267,6 +300,24 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
 
         renderer.render(scene, camera);
       });
+    }
+
+    function applyBodyStyleToView(view: any, style: BodyStyle, defaultChimeraLook: any) {
+      if (style === "head-only") {
+        view.group.visible = false;
+      } else if (style === "ethereal") {
+        view.group.visible = true;
+        view.look = ETHEREAL_LOOK;
+        if (view.mat?.uniforms?.uAlpha) view.mat.uniforms.uAlpha.value = 0.22;
+        if (view.backMat?.uniforms?.uAlpha) view.backMat.uniforms.uAlpha.value = 0.12;
+      } else {
+        // "mesh"
+        view.group.visible = true;
+        view.look = defaultChimeraLook;
+        if (view.mat?.uniforms?.uAlpha) view.mat.uniforms.uAlpha.value = 0.92;
+        if (view.backMat?.uniforms?.uAlpha) view.backMat.uniforms.uAlpha.value = 0.92;
+      }
+      view.toneChanged?.();
     }
 
     initScene().catch((err) => {
