@@ -1,11 +1,11 @@
 /**
  * ScenePlayer — runs a Scene: speaks each line through CHIMERA, waits between lines,
- * and reports back which event is active so the UI can highlight it.
+ * and reports back which event and character is active so the UI and 3D rig can adapt.
  *
  * Usage:
  *   const player = new ScenePlayer(scene);
- *   player.onProgress = (idx) => setActiveEvent(idx);
- *   await player.play(body);
+ *   player.onProgress = (idx, charId, posture) => { ... };
+ *   await player.play();
  *   player.stop();
  *
  * Scope: this only orchestrates *what* is said and *when*; it does not change
@@ -15,14 +15,18 @@ import { PRESETS, defaultF0 } from "@chimera/ui/body.ts";
 import { speakText, speakingNow, stopSpeaking } from "@chimera/ui/speech.ts";
 import { DIALECT_PRESETS } from "@chimera/wasm/engine.ts";
 import { useStore } from "@chimera/ui/store.ts";
-import { isLine, isBeat, lineVoiceParams, getCharacter, type Scene } from "./scene.ts";
+import { isLine, isBeat, lineVoiceParams, getCharacter, type Scene, type PostureHint } from "./scene.ts";
 
 const SLEEP = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 const FRAME = 40; // ms between speakingNow() polls
 
 export class ScenePlayer {
   private token = 0;
-  onProgress: (eventIndex: number | null) => void = () => {};
+  onProgress: (
+    eventIndex: number | null,
+    activeCharacterId: string | null,
+    posture?: PostureHint
+  ) => void = () => {};
 
   constructor(private readonly scene: Scene) {}
 
@@ -30,7 +34,7 @@ export class ScenePlayer {
     const myToken = ++this.token;
     const events = this.scene.events;
 
-    // ensure audio is started before the first line
+    // ensure audio engine is started before the first line
     const state = useStore.getState();
     await state.start();
 
@@ -38,14 +42,16 @@ export class ScenePlayer {
       if (this.token !== myToken) return;
 
       const ev = events[i];
-      this.onProgress(i);
 
       if (isBeat(ev)) {
+        this.onProgress(i, null, "neutral");
         await SLEEP(ev.durationS * 1000);
         continue;
       }
 
       if (!isLine(ev)) continue;
+
+      this.onProgress(i, ev.characterId, ev.posture ?? "attentive");
 
       // pauseBefore
       if (ev.pauseBefore && ev.pauseBefore > 0) await SLEEP(ev.pauseBefore * 1000);
@@ -67,12 +73,12 @@ export class ScenePlayer {
       }
     }
 
-    if (this.token === myToken) this.onProgress(null);
+    if (this.token === myToken) this.onProgress(null, null, "neutral");
   }
 
   stop(): void {
     this.token++;
     stopSpeaking();
-    this.onProgress(null);
+    this.onProgress(null, null, "neutral");
   }
 }

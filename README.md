@@ -4,10 +4,13 @@ Experimento compañero para construir escenas y personajes alrededor de CHIMERA.
 el motor de voz y su cabeza completa, incluido el tracto vocal animado y el lip-sync. Este proyecto
 añade el escenario, el body rig posable y la orquestación de escenas.
 
-El prototipo actual incluye un personaje con cuerpo posable (el body rig de CHIMERA), selector de
-dialecto español (neutro / rioplatense / castellano) y dos modos de UI: texto libre y escena
-reproducible (guión con turnos y pausas). No cambia pronunciación, planificación, articulación ni
-síntesis.
+El prototipo actual incluye:
+- Escena compartida con uno o dos personajes en 3D con body rig posable de CHIMERA.
+- Miradas mutuas e interpolación de posturas (atento, relajado, gesticulando) entre turnos de habla.
+- Selector de dialecto español (neutro / rioplatense / castellano).
+- Formato de escena serializable con importación/exportación de archivos JSON.
+- Dos modos de UI: Escena & Diálogo (guiones con turnos y pausas) y Voz Libre (control manual).
+No cambia pronunciación, planificación, articulación ni síntesis.
 
 ## Empezar
 

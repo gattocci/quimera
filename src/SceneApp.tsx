@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { PRESETS, defaultF0 } from "@chimera/ui/body.ts";
 import { speakText, speakingNow, stopSpeaking } from "@chimera/ui/speech.ts";
 import { useStore } from "@chimera/ui/store.ts";
@@ -7,51 +7,109 @@ import type { Lang, DialectPreset } from "@chimera/wasm/engine.ts";
 import { DIALECT_PRESETS } from "@chimera/wasm/engine.ts";
 import { RigScene } from "./RigScene.tsx";
 import { ScenePlayer } from "./ScenePlayer.ts";
-import { DEMO_SCENE, type Scene } from "./scene.ts";
+import {
+  DIALOGUE_SCENE,
+  SOLILOQUY_SCENE,
+  validateScene,
+  type Character,
+  type PostureHint,
+  type Scene,
+} from "./scene.ts";
 
-/** Two modes: free (single text box) and scene (plays a Scene document). */
 type AppMode = "free" | "scene";
 
 export function SceneApp() {
-  const [mode, setMode] = useState<AppMode>("free");
+  const [mode, setMode] = useState<AppMode>("scene");
 
-  // ── free mode state ──
+  // ── Free mode state ──
   const [text, setText] = useState("Hola. Soy una voz hecha de aire.");
   const [lang, setLang] = useState<Lang>("es");
   const [dialectPreset, setDialectPreset] = useState<DialectPreset>("neutro");
   const [body, setBody] = useState<keyof typeof PRESETS>("female");
   const run = useRef(0);
 
-  // ── scene mode state ──
-  const [scene] = useState<Scene>(DEMO_SCENE);
-  const playerRef = useRef<ScenePlayer | null>(null);
-  const [activeEvent, setActiveEvent] = useState<number | null>(null);
+  // ── Scene mode state ──
+  const [scenePresetKey, setScenePresetKey] = useState<"dialogue" | "soliloquy" | "custom">("dialogue");
+  const [scene, setScene] = useState<Scene>(DIALOGUE_SCENE);
+  const [activeEventIndex, setActiveEventIndex] = useState<number | null>(null);
+  const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
+  const [activePosture, setActivePosture] = useState<PostureHint>("neutral");
+  const [jsonError, setJsonError] = useState<string | null>(null);
 
-  // ── shared ──
+  const playerRef = useRef<ScenePlayer | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const jsonInputId = useId();
+
+  // ── Shared audio state ──
   const [speaking, setSpeaking] = useState(false);
   const started = useStore((s) => s.started);
 
-  // keep ScenePlayer in sync with the current scene
+  // Keep ScenePlayer synchronized with the current scene
   useEffect(() => {
     const p = new ScenePlayer(scene);
-    p.onProgress = (idx) => {
-      setActiveEvent(idx);
-      setSpeaking(idx !== null);
+    p.onProgress = (idx, charId, posture) => {
+      setActiveEventIndex(idx);
+      setActiveCharacterId(charId);
+      setActivePosture(posture ?? "neutral");
+      setSpeaking(idx !== null && charId !== null);
     };
     playerRef.current = p;
-    return () => { p.stop(); };
+    return () => {
+      p.stop();
+    };
   }, [scene]);
 
-  // ── free mode play ──
+  // Handle preset change
+  const handlePresetChange = (key: "dialogue" | "soliloquy" | "custom") => {
+    setScenePresetKey(key);
+    setJsonError(null);
+    if (key === "dialogue") setScene(DIALOGUE_SCENE);
+    if (key === "soliloquy") setScene(SOLILOQUY_SCENE);
+  };
+
+  // Import JSON scene
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const raw = JSON.parse(event.target?.result as string);
+        const valid = validateScene(raw);
+        setScene(valid);
+        setScenePresetKey("custom");
+        setJsonError(null);
+      } catch (err) {
+        setJsonError(err instanceof Error ? err.message : String(err));
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  // Export current scene as JSON
+  const handleExportJson = () => {
+    const blob = new Blob([JSON.stringify(scene, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${scene.title.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "scene"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Free mode play ──
   const playFree = async () => {
     if (speaking) {
       run.current++;
       stopSpeaking();
       setSpeaking(false);
+      setActiveCharacterId(null);
       return;
     }
     const token = ++run.current;
     setSpeaking(true);
+    setActiveCharacterId("solo");
     try {
       const voice = PRESETS[body];
       const state = useStore.getState();
@@ -60,29 +118,54 @@ export function SceneApp() {
       await state.start();
       if (!useStore.getState().started || run.current !== token) return;
       const dialect = lang === "es" ? DIALECT_PRESETS[dialectPreset] : undefined;
-      const plan = await speakText(text, { ipa: false, lang, dialect, body: voice, rate: 1, f0: defaultF0(voice) });
+      const plan = await speakText(text, {
+        ipa: false,
+        lang,
+        dialect,
+        body: voice,
+        rate: 1,
+        f0: defaultF0(voice),
+      });
       if (plan) {
-        while (run.current === token && speakingNow())
+        while (run.current === token && speakingNow()) {
           await new Promise((resolve) => window.setTimeout(resolve, 40));
+        }
       }
     } finally {
-      if (run.current === token) setSpeaking(false);
+      if (run.current === token) {
+        setSpeaking(false);
+        setActiveCharacterId(null);
+      }
     }
   };
 
-  // ── scene mode play ──
+  // ── Scene mode play ──
   const playScene = () => {
     const p = playerRef.current;
     if (!p) return;
-    if (speaking) { p.stop(); return; }
+    if (speaking) {
+      p.stop();
+      return;
+    }
     void p.play();
   };
 
+  // Construct active characters for the 3D rig
   const isSceneMode = mode === "scene";
-  // in scene mode, body comes from the active character (or first character)
-  const activeBody = isSceneMode
-    ? (PRESETS[(scene.characters[0]?.body ?? "female")])
-    : PRESETS[body];
+  const activeCharacters: Character[] = useMemo(() => {
+    if (!isSceneMode) {
+      return [
+        {
+          id: "solo",
+          name: "Voz de aire",
+          body,
+          lang,
+          dialectPreset,
+        },
+      ];
+    }
+    return scene.characters;
+  }, [isSceneMode, body, lang, dialectPreset, scene.characters]);
 
   return (
     <main className="quimera-app">
@@ -91,53 +174,143 @@ export function SceneApp() {
           <p className="quimera-kicker">CHIMERA · proyecto compañero</p>
           <h1>Quimera</h1>
         </div>
-        <p className="quimera-note">La cabeza y la voz siguen siendo CHIMERA. La escena añade el cuerpo.</p>
+        <p className="quimera-note">
+          La cabeza y la voz siguen siendo CHIMERA. La escena añade el cuerpo y los turnos.
+        </p>
       </header>
 
-      {/* ── stage ── */}
-      <section className={`quimera-stage${speaking ? " is-speaking" : ""}`} aria-label="Escena">
+      {/* ── 3D Stage with RigScene ── */}
+      <section className={`quimera-stage${speaking ? " is-speaking" : ""}`} aria-label="Escena 3D">
         <div className="quimera-grid" aria-hidden="true" />
-        <div className="quimera-performer">
-          <RigScene body={activeBody} speaking={speaking} className="quimera-rig-canvas" />
-          <span className="quimera-name">
-            {isSceneMode ? (scene.characters[0]?.name ?? "Personaje") : "Voz de aire"}
-          </span>
+        <div className="quimera-stage-viewport">
+          <RigScene
+            characters={activeCharacters}
+            activeCharacterId={activeCharacterId}
+            activePosture={activePosture}
+            speaking={speaking}
+            className="quimera-rig-canvas"
+          />
+          <div className="quimera-cast-labels" aria-hidden="true">
+            {activeCharacters.map((c) => (
+              <span
+                key={c.id}
+                className={`quimera-performer-badge${activeCharacterId === c.id ? " is-speaking" : ""}`}
+              >
+                {c.name}
+              </span>
+            ))}
+          </div>
         </div>
         <span className="quimera-stage-caption">
-          {speaking ? "HABLANDO · ARTICULACIÓN CHIMERA" : "EN ESCENA · EN REPOSO"}
+          {speaking
+            ? `HABLANDO: ${activeCharacters.find((c) => c.id === activeCharacterId)?.name ?? "PERSONAJE"} · POSTURA: ${activePosture.toUpperCase()}`
+            : "EN ESCENA · REPOSO"}
         </span>
       </section>
 
-      {/* ── controls ── */}
+      {/* ── Control Console ── */}
       <section className="quimera-controls" aria-label="Controles del prototipo">
-        {/* mode switcher */}
-        <div className="quimera-mode-tabs" role="tablist" aria-label="Modo">
-          <button
-            role="tab"
-            aria-selected={!isSceneMode}
-            className={`quimera-tab${!isSceneMode ? " is-active" : ""}`}
-            onClick={() => setMode("free")}
-          >
-            Libre
-          </button>
+        <div className="quimera-mode-tabs" role="tablist" aria-label="Modo de ejecución">
           <button
             role="tab"
             aria-selected={isSceneMode}
             className={`quimera-tab${isSceneMode ? " is-active" : ""}`}
             onClick={() => setMode("scene")}
           >
-            Escena
+            Escena & Diálogo
+          </button>
+          <button
+            role="tab"
+            aria-selected={!isSceneMode}
+            className={`quimera-tab${!isSceneMode ? " is-active" : ""}`}
+            onClick={() => setMode("free")}
+          >
+            Voz Libre
           </button>
         </div>
 
-        {/* free mode */}
+        {/* ── Scene Mode Controls ── */}
+        {isSceneMode && (
+          <div className="quimera-scene-deck">
+            <div className="quimera-scene-bar">
+              <label>
+                Guión
+                <select
+                  value={scenePresetKey}
+                  onChange={(e) => handlePresetChange(e.target.value as any)}
+                >
+                  <option value="dialogue">Diálogo: Aria & Dante (2 personajes)</option>
+                  <option value="soliloquy">Soliloquio: Aria (1 personaje)</option>
+                  <option value="custom">Personalizado (archivo JSON)</option>
+                </select>
+              </label>
+
+              <button
+                type="button"
+                className="quimera-btn-secondary"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Cargar JSON
+              </button>
+              <input
+                id={jsonInputId}
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                style={{ display: "none" }}
+                onChange={handleFileUpload}
+              />
+
+              <button type="button" className="quimera-btn-secondary" onClick={handleExportJson}>
+                Exportar JSON
+              </button>
+            </div>
+
+            {jsonError && <p className="quimera-error-banner">{jsonError}</p>}
+
+            <ol className="quimera-script">
+              {scene.events.map((ev, i) => {
+                const isActive = activeEventIndex === i;
+                if ("kind" in ev) {
+                  return (
+                    <li key={i} className={`quimera-beat${isActive ? " is-active" : ""}`}>
+                      <span className="quimera-beat-icon">⏱</span>
+                      Pausa: {ev.label ?? "silencio"} ({ev.durationS} s)
+                    </li>
+                  );
+                }
+                const ch = scene.characters.find((c) => c.id === ev.characterId);
+                return (
+                  <li key={i} className={`quimera-line${isActive ? " is-active" : ""}`}>
+                    <span className="quimera-line-name">{ch?.name ?? ev.characterId}</span>
+                    <span className="quimera-line-text">{ev.text}</span>
+                    {ev.posture && <span className="quimera-line-tag">{ev.posture}</span>}
+                  </li>
+                );
+              })}
+            </ol>
+
+            <div className="quimera-options">
+              <Chip toggle={false} onClick={playScene}>
+                {speaking ? "Detener escena" : "Reproducir escena"}
+              </Chip>
+              <span className="quimera-status" aria-live="polite">
+                {started ? "Audio listo" : "El audio inicia al pulsar Reproducir"}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* ── Free Mode Controls ── */}
         {!isSceneMode && (
-          <>
-            <label className="quimera-text-label" htmlFor="scene-text">Texto</label>
+          <div className="quimera-free-deck">
+            <label className="quimera-text-label" htmlFor="scene-text">
+              Texto
+            </label>
             <textarea
               id="scene-text"
               value={text}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(e) => setText(e.target.value)}
               rows={2}
             />
             <div className="quimera-options">
@@ -166,7 +339,10 @@ export function SceneApp() {
 
               <label>
                 Cuerpo
-                <select value={body} onChange={(e) => setBody(e.target.value as keyof typeof PRESETS)}>
+                <select
+                  value={body}
+                  onChange={(e) => setBody(e.target.value as keyof typeof PRESETS)}
+                >
                   <option value="female">Adulto · preset femenino</option>
                   <option value="male">Adulto · preset masculino</option>
                   <option value="child">Infantil</option>
@@ -177,49 +353,15 @@ export function SceneApp() {
                 {speaking ? "Detener" : "Hablar"}
               </Chip>
               <span className="quimera-status" aria-live="polite">
-                {started ? "Audio listo" : "El audio empieza al pulsar Hablar"}
+                {started ? "Audio listo" : "El audio inicia al pulsar Hablar"}
               </span>
             </div>
-          </>
-        )}
-
-        {/* scene mode */}
-        {isSceneMode && (
-          <>
-            <p className="quimera-scene-title">{scene.title}</p>
-            <ol className="quimera-script">
-              {scene.events.map((ev, i) => {
-                const isActive = activeEvent === i;
-                if ("kind" in ev) {
-                  return (
-                    <li key={i} className={`quimera-beat${isActive ? " is-active" : ""}`} aria-hidden="true">
-                      {ev.label ?? "·"}
-                    </li>
-                  );
-                }
-                const ch = scene.characters.find((c) => c.id === ev.characterId);
-                return (
-                  <li key={i} className={`quimera-line${isActive ? " is-active" : ""}`}>
-                    <span className="quimera-line-name">{ch?.name ?? ev.characterId}</span>
-                    <span className="quimera-line-text">{ev.text}</span>
-                  </li>
-                );
-              })}
-            </ol>
-            <div className="quimera-options">
-              <Chip toggle={false} onClick={playScene}>
-                {speaking ? "Detener escena" : "Reproducir escena"}
-              </Chip>
-              <span className="quimera-status" aria-live="polite">
-                {started ? "Audio listo" : "El audio empieza al pulsar Reproducir"}
-              </span>
-            </div>
-          </>
+          </div>
         )}
       </section>
 
       <footer className="quimera-footer">
-        Prototipo inicial · voz, tracto y lip-sync sin modificar · cuerpo experimental independiente
+        Quimera · escenas, cuerpo y turnos para CHIMERA · articulación vocal física original
       </footer>
     </main>
   );

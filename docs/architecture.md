@@ -29,19 +29,24 @@ gestos discretos. No hace falta un esqueleto facial complejo para cada personaje
 se puede simplificar el cuerpo y espaciar sus reacciones, pero el personaje que habla usa la cabeza
 completa de CHIMERA.
 
-## Estado actual (primer hito completado)
+## Estado actual (escena dialogada y cuerpo posable)
 
 El prototipo incluye:
 
-- **Body rig real** (`src/RigScene.tsx`): el rig de CHIMERA (`src/rig/`) puesto en escena con
-  Three.js. La cabeza se acopla al cuello del rig; la respiración anima el cuerpo mientras habla.
+- **Body rig real y multi-personaje** (`src/RigScene.tsx`): hasta dos personajes en escena dentro
+  del mismo lienzo WebGL. Cada personaje tiene su propio body rig de CHIMERA (`src/rig/`) y cabeza 3D.
+- **Transiciones de postura y atención** (`src/poses.ts`): interpolación suave (lerp) entre posturas
+  (`neutral`, `attentive`, `relaxed`, `gesturing`). Cuando un personaje habla, el interlocutor gira
+  la cabeza y el torso para mirarlo y escucharlo; al finalizar la frase, ambos regresan al reposo.
 - **Dialecto español** (`src/SceneApp.tsx`): selector de `Dialect` expuesto en la UI; los presets
   son `neutro`, `rioplatense` y `castellano`, tal como los define CHIMERA.
-- **Formato de escena** (`src/scene.ts`): tipo `Scene` serializable con personajes, líneas y beats
-  de silencio. No depende de tipos internos de CHIMERA.
+- **Formato de escena serializable** (`src/scene.ts`): esquema `Scene` con personajes, líneas, pausas
+  y validación de esquema (`validateScene`). Incluye preajustes de diálogo a dos voces y soliloquio.
+- **Importación y exportación JSON**: carga de guiones externos en formato JSON directamente en el
+  navegador con validación estricta, y descarga del guión actual.
 - **Reproductor de escena** (`src/ScenePlayer.ts`): ejecuta una `Scene` línea a línea, respeta las
   pausas y delega el habla a CHIMERA sin recalcular duración por caracteres.
-- **Modos de la UI**: "Libre" (texto único, control manual) y "Escena" (guión reproducible).
+- **Modos de la UI**: "Escena & Diálogo" (guión interactivo con selección de preset) y "Voz Libre".
 
 ## Dependencia fijada
 

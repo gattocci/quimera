@@ -1,83 +1,70 @@
 /**
- * RigScene — the CHIMERA head worn by the body rig, rendered live in a Three.js canvas.
+ * RigScene — Renders one or two CHIMERA performers in a shared Three.js scene.
  *
- * Keeps Three.js and rig state entirely inside this component.
- * The parent passes body preset and speaking state; the component manages
- * the render loop and telemetry subscription itself.
- *
- * Layout rules:
- *  - renderer.outputColorSpace = THREE.LinearSRGBColorSpace (the head's colours are display values)
- *  - no OrbitControls; camera is fixed to a portrait view of the performer
+ * Capabilities:
+ *  - 1 or 2 performers with individual body rigs, voices, and 3D heads.
+ *  - Natural posture transitions (lerp) based on speech state and PostureHints.
+ *  - Interlocutor gaze tracking: listeners turn toward speakers.
+ *  - Live articulatory lip-sync + telemetry for the active speaker.
+ *  - Single WebGL canvas with high performance and linear color space.
  */
+
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import type { BodyMix } from "@chimera/ui/body.ts";
 import type { TelemetryMessage } from "@chimera/wasm/../../src/worklet/protocol.ts";
 import { engine } from "@chimera/audio/AudioEngine.ts";
 import { useStore } from "@chimera/ui/store.ts";
+import type { Character, PostureHint } from "./scene.ts";
+import { POSTURE_PRESETS, listeningPose, lerpPose, clonePose } from "./poses.ts";
+import type { Pose } from "@chimera/rig/pose.ts";
 
 export interface RigSceneProps {
-  body: BodyMix;
+  characters: Character[];
+  activeCharacterId: string | null;
+  activePosture?: PostureHint;
   speaking: boolean;
   className?: string;
 }
 
-export function RigScene({ body, speaking, className }: RigSceneProps) {
+interface PerformerInstance {
+  id: string;
+  group: THREE.Group;
+  rig: any;
+  model: any;
+  head: any;
+  view: any;
+  skinned: Float32Array;
+  currentPose: Pose;
+  targetPose: Pose;
+  baseTurn: number;
+}
+
+export function RigScene({
+  characters,
+  activeCharacterId,
+  activePosture = "attentive",
+  speaking,
+  className,
+}: RigSceneProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Keep live props in refs so animation loop has instant access
+  const charactersRef = useRef(characters);
+  charactersRef.current = characters;
+  const activeCharRef = useRef(activeCharacterId);
+  activeCharRef.current = activeCharacterId;
+  const activePostureRef = useRef(activePosture);
+  activePostureRef.current = activePosture;
   const speakingRef = useRef(speaking);
   speakingRef.current = speaking;
-  const bodyRef = useRef(body);
-  bodyRef.current = body;
-  const started = useStore((s) => s.started);
-  const startedRef = useRef(started);
-  startedRef.current = started;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     let disposed = false;
-    let rigModule: Awaited<ReturnType<typeof loadRig>> | null = null;
+    let performers: PerformerInstance[] = [];
     let animId = 0;
-
-    async function loadRig() {
-      const [
-        { Rig },
-        { wearHead },
-        { RigView },
-        { VoiceModel },
-        { PRESETS: BODY_PRESETS },
-        { REST_ARTIC },
-        { pose },
-      ] = await Promise.all([
-        import("@chimera/rig/rig.ts"),
-        import("@chimera/rig/head.ts"),
-        import("@chimera/rig/view.ts"),
-        import("@chimera/ui/analysis.ts"),
-        import("@chimera/ui/body.ts"),
-        import("@chimera/ui/render/anatomy3d.ts"),
-        import("@chimera/rig/pose.ts"),
-      ]);
-
-      const rigUrl = new URL("../chimera/src/rig/body.rig.bin", import.meta.url).href;
-      const rig = await Rig.load(rigUrl);
-      const b = bodyRef.current;
-      const model = new VoiceModel(b, 48000);
-      const head = wearHead(rig, model);
-      const view = new RigView(rig);
-
-      // Breathing / idle pose
-      const idlePose = pose({
-        spine: { flex: 2 },
-        neck: { flex: -4 },
-        bothArms: { raise: 8, plane: 10, elbow: 10 },
-      });
-      rig.pose(idlePose);
-      const skinned = new Float32Array(3 * rig.n);
-      rig.skin(skinned);
-
-      return { rig, model, head, view, skinned, idlePose, pose, BODY_PRESETS, REST_ARTIC };
-    }
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -87,76 +74,163 @@ export function RigScene({ body, speaking, className }: RigSceneProps) {
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(28, 1, 5, 5000);
 
-    // Portrait view: looking at the head-and-shoulders from slightly front-right
-    camera.position.set(30, 155, 320);
-    camera.lookAt(10, 140, 0);
-
     let lastTele: TelemetryMessage | null = null;
-    const unsubTele = engine.onTelemetry((t) => { lastTele = t; });
+    const unsubTele = engine.onTelemetry((t) => {
+      lastTele = t;
+    });
 
-    // Breath animation
-    let breathT = 0;
-    let last = performance.now();
+    // Load modules once
+    async function initScene() {
+      const [
+        { Rig },
+        { wearHead },
+        { RigView },
+        { VoiceModel },
+        { PRESETS: BODY_PRESETS },
+        { REST_ARTIC },
+      ] = await Promise.all([
+        import("@chimera/rig/rig.ts"),
+        import("@chimera/rig/head.ts"),
+        import("@chimera/rig/view.ts"),
+        import("@chimera/ui/analysis.ts"),
+        import("@chimera/ui/body.ts"),
+        import("@chimera/ui/render/anatomy3d.ts"),
+      ]);
 
-    loadRig().then((m) => {
-      if (disposed) {
-        m.head.dispose();
-        m.view.dispose();
-        return;
+      const rigUrl = new URL("../chimera/src/rig/body.rig.bin", import.meta.url).href;
+      const chars = charactersRef.current;
+      const isDual = chars.length > 1;
+
+      // Adjust camera for 1 vs 2 performers
+      if (isDual) {
+        camera.position.set(0, 150, 420);
+        camera.lookAt(0, 136, 0);
+      } else {
+        camera.position.set(20, 155, 320);
+        camera.lookAt(0, 140, 0);
       }
-      rigModule = m;
-      scene.add(m.view.group, m.head.mount);
 
-      // size once
+      for (let i = 0; i < chars.length; i++) {
+        if (disposed) return;
+        const ch = chars[i];
+        const rig = await Rig.load(rigUrl);
+        const voiceBody = BODY_PRESETS[ch.body] ?? BODY_PRESETS.female;
+        const model = new VoiceModel(voiceBody, 48000);
+        const head = wearHead(rig, model);
+        const view = new RigView(rig);
+
+        const group = new THREE.Group();
+        group.add(view.group, head.mount);
+
+        // Position: dual layout or single centered
+        const posX = isDual ? (i === 0 ? -48 : 48) : 0;
+        const baseTurn = isDual ? (i === 0 ? -12 : 12) : 0;
+        group.position.set(posX, 0, 0);
+        scene.add(group);
+
+        const initialPose = clonePose(POSTURE_PRESETS.neutral);
+        initialPose.body.turn = baseTurn;
+        rig.pose(initialPose);
+        const skinned = new Float32Array(3 * rig.n);
+        rig.skin(skinned);
+
+        performers.push({
+          id: ch.id,
+          group,
+          rig,
+          model,
+          head,
+          view,
+          skinned,
+          currentPose: clonePose(initialPose),
+          targetPose: clonePose(initialPose),
+          baseTurn,
+        });
+      }
+
       sizeRenderer();
+
+      let breathT = 0;
+      let last = performance.now();
 
       renderer.setAnimationLoop((now) => {
         const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
         last = now;
-        if (!rigModule) return;
-        const { rig, head, view, skinned, idlePose, pose: poseFn, REST_ARTIC } = rigModule;
-
         breathT += dt;
-        const speaking = speakingRef.current;
-        // subtle breath sway
-        const breathScale = speaking ? 1.4 : 0.8;
-        const breath = Math.sin(breathT * (speaking ? 0.72 : 0.42) * Math.PI * 2) * breathScale;
-        const nodAmount = speaking ? Math.sin(breathT * 0.31 * Math.PI * 2) * 1.5 : 0;
 
-        const p = poseFn({
-          spine: { flex: 2 + breath * 0.4 },
-          neck: { flex: -4 + nodAmount, bend: Math.sin(breathT * 0.19 * Math.PI * 2) * 0.6 },
-          bothArms: { raise: 8, plane: 10, elbow: 10 },
-        });
-        rig.pose(p);
-        rig.skin(skinned);
+        const activeId = activeCharRef.current;
+        const isSpeaking = speakingRef.current;
+        const postureKey = activePostureRef.current ?? "attentive";
+        const hasSpeaker = isSpeaking && activeId !== null;
 
-        // the store's artic only updates during active speech; fall back to rest outside it
-        const store = useStore.getState();
-        const artic = startedRef.current ? store.artic : REST_ARTIC;
-        head.update(camera, artic, lastTele, dt);
-        head.face(skinned, view.posed);
-        view.update();
+        for (let i = 0; i < performers.length; i++) {
+          const p = performers[i];
+          const isCurrentSpeaker = hasSpeaker && p.id === activeId;
+          const isSolo = performers.length === 1;
+
+          // Compute target pose
+          let target: Pose;
+          if (isCurrentSpeaker) {
+            target = clonePose(POSTURE_PRESETS[postureKey] ?? POSTURE_PRESETS.attentive);
+            target.body.turn += p.baseTurn * 0.5;
+            // speaking nod & sway
+            target.neck.flex += Math.sin(breathT * 0.35 * Math.PI * 2) * 1.5;
+            target.spine.flex += Math.sin(breathT * 0.7 * Math.PI * 2) * 0.6;
+          } else if (hasSpeaker && !isSolo) {
+            // Listener turns toward interlocutor
+            const otherIndex = performers.findIndex((x) => x.id === activeId);
+            const side: -1 | 1 = otherIndex > i ? 1 : -1;
+            target = listeningPose(side);
+            target.body.turn += p.baseTurn;
+            // gentle listening breath
+            target.spine.flex += Math.sin(breathT * 0.4 * Math.PI * 2) * 0.3;
+          } else {
+            // Idle / resting
+            target = clonePose(POSTURE_PRESETS.neutral);
+            target.body.turn += p.baseTurn;
+            // calm breathing
+            target.spine.flex += Math.sin(breathT * 0.45 * Math.PI * 2) * 0.4;
+          }
+
+          // Smooth interpolation towards target pose
+          p.currentPose = lerpPose(p.currentPose, target, Math.min(1, dt * 4.5));
+          p.rig.pose(p.currentPose);
+          p.rig.skin(p.skinned);
+
+          // Articulation: only active speaker moves mouth
+          const store = useStore.getState();
+          const artic = isCurrentSpeaker && store.started ? store.artic : REST_ARTIC;
+          const tele = isCurrentSpeaker ? lastTele : null;
+
+          p.head.update(camera, artic, tele, dt);
+          p.head.face(p.skinned, p.view.posed);
+          p.view.update();
+        }
 
         renderer.render(scene, camera);
       });
-    }).catch((err) => {
-      console.error("[RigScene] Failed to load rig:", err);
+    }
+
+    initScene().catch((err) => {
+      console.error("[RigScene] Initialization failed:", err);
     });
 
     function sizeRenderer() {
       const c = canvasRef.current;
       if (!c) return;
-      const w = c.clientWidth, h = c.clientHeight;
+      const w = c.clientWidth,
+        h = c.clientHeight;
       if (w === 0 || h === 0) return;
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      rigModule?.head.resize(w, h);
+      for (const p of performers) {
+        p.head.resize(w, h);
+      }
     }
 
     const ro = new ResizeObserver(sizeRenderer);
-    if (canvas) ro.observe(canvas);
+    ro.observe(canvas);
 
     return () => {
       disposed = true;
@@ -164,19 +238,22 @@ export function RigScene({ body, speaking, className }: RigSceneProps) {
       renderer.setAnimationLoop(null);
       unsubTele();
       ro.disconnect();
-      rigModule?.head.dispose();
-      rigModule?.view.dispose();
+      for (const p of performers) {
+        p.head.dispose();
+        p.view.dispose();
+        p.model.dispose?.();
+        scene.remove(p.group);
+      }
       renderer.dispose();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // mount once — body changes are handled via refs
+  }, [characters]); // Re-init when character roster changes
 
   return (
     <canvas
       ref={canvasRef}
       className={className}
       style={{ width: "100%", height: "100%", display: "block" }}
-      aria-label="Personaje 3D con cabeza CHIMERA y cuerpo posable"
+      aria-label="Escena 3D con personajes y body rig de CHIMERA"
     />
   );
 }
