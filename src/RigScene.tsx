@@ -4,8 +4,9 @@
  * Capabilities:
  *  - 1 or 2 performers with individual body rigs, voices, and 3D heads.
  *  - Body style modes:
+ *      * "anatomic": Horizontal contour slice rings matching the exact aesthetic of the CHIMERA head.
  *      * "head-only": Pure CHIMERA standalone head floating in space, zero body clutter.
- *      * "ethereal": Soft, translucent silhouette that anchors the head gently without competing.
+ *      * "ethereal": Soft, translucent contour silhouette that anchors the head gently.
  *      * "mesh": Complete technical wireframe rig.
  *  - Restores the iconic CHIMERA anatomic wireframe aesthetic ("classic" look: cyan contour loops,
  *    glowing orange jaw, vivid airway, tongue, and larynx).
@@ -48,17 +49,87 @@ interface PerformerInstance {
   model: any;
   head: any;
   view: any;
+  contourMat: THREE.ShaderMaterial;
+  origFrontMat: THREE.ShaderMaterial;
+  origBackMat: THREE.ShaderMaterial;
   skinned: Float32Array;
   currentPose: Pose;
   targetPose: Pose;
   baseTurn: number;
 }
 
-const ETHEREAL_LOOK = {
-  fill: [0.001, 0.003, 0.006] as [number, number, number],
-  line: [0.02, 0.12, 0.24] as [number, number, number],
-  edge: [0.01, 0.05, 0.12] as [number, number, number],
-};
+// ────────────────────────────────────────────── Contour Ring Shaders ─────────
+
+const CONTOUR_VERT = /* glsl */ `
+varying vec3 vPos;
+varying vec3 vN;
+varying vec3 vV;
+void main() {
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vPos = position;
+  vN = normalMatrix * normal;
+  vV = -mv.xyz;
+  gl_Position = projectionMatrix * mv;
+}
+`;
+
+const CONTOUR_FRAG = /* glsl */ `
+uniform vec3 uLine;
+uniform vec3 uEdge;
+uniform vec3 uFill;
+uniform float uAlpha;
+uniform float uRingStep;
+uniform float uLineWidth;
+varying vec3 vPos;
+varying vec3 vN;
+varying vec3 vV;
+
+void main() {
+  vec3 n = normalize(vN);
+  vec3 v = normalize(vV);
+  float facing = abs(dot(n, v));
+  float rim = pow(1.0 - facing, 2.4);
+
+  // Horizontal contour ring slice matching CHIMERA head's rings
+  float y = vPos.y;
+  float ringDist = abs(fract(y / uRingStep + 0.5) - 0.5) * uRingStep;
+  float dy = max(fwidth(y), 0.001);
+  float ring = 1.0 - smoothstep(uLineWidth, uLineWidth + dy * 1.6, ringDist);
+
+  // Soft fade below the waist/hips to keep an elegant anatomical bust
+  float heightFade = smoothstep(68.0, 96.0, y);
+
+  // Combine line, rim edge, and subtle fill
+  vec3 col = uFill * 0.2 + uEdge * 1.1 * rim + uLine * ring * (0.6 + 0.4 * facing) * 1.5;
+  col = max(col, 0.0);
+  col = mix(col * 12.92, 1.055 * pow(col, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, col));
+
+  float alpha = uAlpha * max(ring * 1.15, rim * 0.65) * heightFade;
+  if (alpha < 0.015) discard;
+
+  gl_FragColor = vec4(col, alpha);
+}
+`;
+
+function createContourMaterial(opacity = 0.85, ringStep = 1.6) {
+  return new THREE.ShaderMaterial({
+    vertexShader: CONTOUR_VERT,
+    fragmentShader: CONTOUR_FRAG,
+    uniforms: {
+      uLine: { value: new THREE.Vector3(0.06, 0.38, 0.72) }, // CHIMERA cyan
+      uEdge: { value: new THREE.Vector3(0.02, 0.18, 0.38) },
+      uFill: { value: new THREE.Vector3(0.002, 0.006, 0.012) },
+      uAlpha: { value: opacity },
+      uRingStep: { value: ringStep },
+      uLineWidth: { value: 0.045 },
+    },
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+}
+
+// ────────────────────────────────────────────── Component ─────────────────────
 
 export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigScene(
   {
@@ -67,7 +138,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
     activePosture = "attentive",
     speaking,
     headLook = "classic",
-    bodyStyle = "head-only",
+    bodyStyle = "anatomic",
     className,
   },
   ref
@@ -129,7 +200,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       const [
         { Rig },
         { wearHead, HEAD_LOOKS },
-        { RigView, CHIMERA_LOOK },
+        { RigView },
         { VoiceModel },
         { PRESETS: BODY_PRESETS },
         { REST_ARTIC },
@@ -172,6 +243,13 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
         const head = wearHead(rig, model, { look: lookConfig });
         const view = new RigView(rig);
 
+        // Save original materials so we can switch back to "mesh" cleanly
+        const frontMesh = view.group.children[1] as THREE.Mesh;
+        const backMesh = view.group.children[0] as THREE.Mesh;
+        const origFrontMat = frontMesh.material as THREE.ShaderMaterial;
+        const origBackMat = backMesh.material as THREE.ShaderMaterial;
+        const contourMat = createContourMaterial(0.85, 1.6);
+
         // Position on stage
         const defaultX = isDual ? (i === 0 ? -48 : 48) : 0;
         const posX = ch.stageX ?? defaultX;
@@ -182,28 +260,31 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
         group.position.set(posX, 0, 0);
         scene.add(group);
 
-        // Apply body style visibility and shader params
-        const effectiveBodyStyle = ch.bodyStyle ?? bodyStyleRef.current;
-        applyBodyStyleToView(view, effectiveBodyStyle, CHIMERA_LOOK);
-
         const initialPose = clonePose(POSTURE_PRESETS.neutral);
         initialPose.body.turn = baseTurn;
         rig.pose(initialPose);
         const skinned = new Float32Array(3 * rig.n);
         rig.skin(skinned);
 
-        performers.push({
+        const pInstance: PerformerInstance = {
           id: ch.id,
           group,
           rig,
           model,
           head,
           view,
+          contourMat,
+          origFrontMat,
+          origBackMat,
           skinned,
           currentPose: clonePose(initialPose),
           targetPose: clonePose(initialPose),
           baseTurn,
-        });
+        };
+
+        // Apply initial body style
+        applyBodyStyle(pInstance, bodyStyleRef.current);
+        performers.push(pInstance);
       }
 
       sizeRenderer();
@@ -234,8 +315,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
         if (currentStyle !== lastAppliedStyle) {
           lastAppliedStyle = currentStyle;
           for (const p of performers) {
-            const ch = charactersRef.current.find((c) => c.id === p.id);
-            applyBodyStyleToView(p.view, ch?.bodyStyle ?? currentStyle, CHIMERA_LOOK);
+            applyBodyStyle(p, currentStyle);
           }
         }
 
@@ -302,22 +382,40 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       });
     }
 
-    function applyBodyStyleToView(view: any, style: BodyStyle, defaultChimeraLook: any) {
+    function applyBodyStyle(p: PerformerInstance, style: BodyStyle) {
+      const view = p.view;
+      const frontMesh = view.group.children[1] as THREE.Mesh;
+      const backMesh = view.group.children[0] as THREE.Mesh;
+
       if (style === "head-only") {
         view.group.visible = false;
+        view.showBones = false;
+      } else if (style === "anatomic") {
+        // Horizontal contour slice rings matching CHIMERA's head rings
+        view.group.visible = true;
+        p.contourMat.uniforms.uAlpha.value = 0.85;
+        p.contourMat.uniforms.uRingStep.value = 1.6;
+        p.contourMat.uniforms.uLineWidth.value = 0.045;
+        frontMesh.material = p.contourMat;
+        backMesh.visible = false;
+        view.showBones = true; // delicate spine/shoulder line
       } else if (style === "ethereal") {
+        // Soft translucent contour silhouette
         view.group.visible = true;
-        view.look = ETHEREAL_LOOK;
-        if (view.mat?.uniforms?.uAlpha) view.mat.uniforms.uAlpha.value = 0.22;
-        if (view.backMat?.uniforms?.uAlpha) view.backMat.uniforms.uAlpha.value = 0.12;
+        p.contourMat.uniforms.uAlpha.value = 0.3;
+        p.contourMat.uniforms.uRingStep.value = 2.0;
+        p.contourMat.uniforms.uLineWidth.value = 0.035;
+        frontMesh.material = p.contourMat;
+        backMesh.visible = false;
+        view.showBones = false;
       } else {
-        // "mesh"
+        // "mesh": restore standard MakeHuman wireframe quad shader
         view.group.visible = true;
-        view.look = defaultChimeraLook;
-        if (view.mat?.uniforms?.uAlpha) view.mat.uniforms.uAlpha.value = 0.92;
-        if (view.backMat?.uniforms?.uAlpha) view.backMat.uniforms.uAlpha.value = 0.92;
+        frontMesh.material = p.origFrontMat;
+        backMesh.material = p.origBackMat;
+        backMesh.visible = true;
+        view.showBones = false;
       }
-      view.toneChanged?.();
     }
 
     initScene().catch((err) => {
@@ -351,6 +449,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       for (const p of performers) {
         p.head.dispose();
         p.view.dispose();
+        p.contourMat.dispose();
         p.model.dispose?.();
         scene.remove(p.group);
       }

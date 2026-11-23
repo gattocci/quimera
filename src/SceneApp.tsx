@@ -29,7 +29,7 @@ export function SceneApp() {
 
   // ── Global Stage Appearance ──
   const [headLook, setHeadLook] = useState<HeadLookName>("classic");
-  const [bodyStyle, setBodyStyle] = useState<BodyStyle>("head-only");
+  const [bodyStyle, setBodyStyle] = useState<BodyStyle>("anatomic");
   const [atmosphere, setAtmosphere] = useState<StageAtmosphere>("void");
   const rigSceneRef = useRef<RigSceneHandle>(null);
 
@@ -308,9 +308,17 @@ export function SceneApp() {
             <span className="quimera-bar-label">Cuerpo:</span>
             <button
               type="button"
+              className={`quimera-tool-btn${bodyStyle === "anatomic" ? " is-active" : ""}`}
+              onClick={() => setBodyStyle("anatomic")}
+              title="Anillos anatómicos horizontales que continúan la estética exacta de la cabeza"
+            >
+              Anillos contorno
+            </button>
+            <button
+              type="button"
               className={`quimera-tool-btn${bodyStyle === "head-only" ? " is-active" : ""}`}
               onClick={() => setBodyStyle("head-only")}
-              title="Estética original: Cabeza sola sin cuerpo de malla"
+              title="Estética original: Cabeza sola flotante sin cuerpo"
             >
               Cabeza sola
             </button>

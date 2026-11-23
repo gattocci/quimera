@@ -4,7 +4,9 @@
  * Capabilities:
  * - Full character customization (voice body, base pitch f0, dialect, accent color, stageX, bodyStyle).
  * - Rich dialogue lines with posture/feeling hints and precise pause/beat timings.
- * - Global stage appearance (bodyStyle: head-only, ethereal, mesh; atmosphere: void, grid, spotlight).
+ * - Global stage appearance:
+ *     * bodyStyle: "anatomic" (contour rings matching the head), "head-only", "ethereal", "mesh".
+ *     * atmosphere: "void", "grid", "spotlight".
  */
 
 import type { Lang, DialectPreset } from "@chimera/wasm/engine.ts";
@@ -14,8 +16,13 @@ import type { BodyName } from "@chimera/wasm/../../src/worklet/protocol.ts";
 
 export type BodyPreset = BodyName; // "male" | "female" | "child"
 
-/** Body presentation style: head only (pure CHIMERA), ethereal ghost, or complete mesh. */
-export type BodyStyle = "head-only" | "ethereal" | "mesh";
+/** Body presentation style:
+ * - "anatomic": Horizontal contour slice rings matching the exact aesthetic of the CHIMERA head.
+ * - "head-only": Standalone floating head with zero body clutter.
+ * - "ethereal": Faint translucent contour silhouette.
+ * - "mesh": Full technical quad wireframe rig.
+ */
+export type BodyStyle = "anatomic" | "head-only" | "ethereal" | "mesh";
 
 /** Stage visual atmosphere / backdrop. */
 export type StageAtmosphere = "void" | "grid" | "spotlight";
@@ -177,7 +184,7 @@ export function validateScene(data: unknown): Scene {
 export const DIALOGUE_SCENE: Scene = {
   version: 1,
   title: "Diálogo: Aria & Dante",
-  stageBodyStyle: "head-only",
+  stageBodyStyle: "anatomic",
   stageAtmosphere: "void",
   characters: [
     {
@@ -189,7 +196,6 @@ export const DIALOGUE_SCENE: Scene = {
       f0: 210,
       color: "#4fb6f2",
       stageX: -46,
-      bodyStyle: "head-only",
     },
     {
       id: "dante",
@@ -200,31 +206,30 @@ export const DIALOGUE_SCENE: Scene = {
       f0: 115,
       color: "#ffb347",
       stageX: 46,
-      bodyStyle: "head-only",
     },
   ],
   events: [
     {
       characterId: "aria",
-      text: "Hola Dante. ¿Notás lo limpias que se ven ahora nuestras cabezas?",
+      text: "Hola Dante. ¿Notás lo limpios que se ven ahora nuestros cuerpos de contorno?",
       posture: "curious",
     },
     { kind: "beat", label: "pausa reflexiva", durationS: 0.5 },
     {
       characterId: "dante",
-      text: "Totalmente. Sin mallas pesadas, la anatomía vocal vuelve a ser la protagonista.",
+      text: "Totalmente. Los anillos del cuerpo continúan la misma anatomía que la cabeza.",
       posture: "agreement",
     },
     { kind: "beat", label: "pausa", durationS: 0.4 },
     {
       characterId: "aria",
-      text: "Podemos mirarnos, asentir y modular cada frase con su propio sentimiento.",
+      text: "Sin cuadrículas pesadas, la voz y el tracto vocal siguen siendo los protagonistas.",
       posture: "gesturing",
     },
     { kind: "beat", label: "pausa", durationS: 0.4 },
     {
       characterId: "dante",
-      text: "Exacto. Cada voz tiene su aire, su espacio y su presencia en la escena.",
+      text: "Y al respirar y mirarnos, todo el conjunto se mueve en armonía.",
       posture: "emphatic",
     },
   ],
@@ -234,7 +239,7 @@ export const DIALOGUE_SCENE: Scene = {
 export const SOLILOQUY_SCENE: Scene = {
   version: 1,
   title: "Soliloquio: Aria",
-  stageBodyStyle: "head-only",
+  stageBodyStyle: "anatomic",
   stageAtmosphere: "spotlight",
   characters: [
     {
@@ -246,7 +251,6 @@ export const SOLILOQUY_SCENE: Scene = {
       f0: 205,
       color: "#4fb6f2",
       stageX: 0,
-      bodyStyle: "head-only",
     },
   ],
   events: [
@@ -258,7 +262,7 @@ export const SOLILOQUY_SCENE: Scene = {
     { kind: "beat", label: "silencio", durationS: 0.5 },
     {
       characterId: "aria",
-      text: "¿Puedes ver cómo se mueve mi lengua y la mandíbula en tres dimensiones?",
+      text: "Mi cuerpo y mi cabeza ahora comparten el mismo dibujo de contornos anatómicos.",
       posture: "curious",
     },
     { kind: "beat", label: "silencio", durationS: 0.4 },
