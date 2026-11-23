@@ -31,7 +31,7 @@ Abre la URL que imprime Vite y pulsa **Hablar** para iniciar el audio. El protot
 
 ## Estructura
 
-- `chimera/`: CHIMERA fork submodule, pinned at `de56981` for this version's Spanish support; switch to upstream after it lands there.
+- `chimera/`: CHIMERA fork submodule, pinned at `03bb115` (PR #81 head); includes Spanish front end with Dialect support (seseo, rioplatense, castellano) and body rig API.
 - `src/`: la escena y el cuerpo de Quimera.
 - `docs/architecture.md`: límites del proyecto, decisiones y trabajo futuro.
 - `AGENTS.md`: reglas para agentes que trabajen aquí y procedimiento completo para actualizar

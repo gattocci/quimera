@@ -31,7 +31,7 @@ completa de CHIMERA.
 
 ## Dependencia fijada
 
-`chimera/` es el fork de CHIMERA incorporado como Git submodule. El padre guarda un gitlink a un SHA específico; dos clones del mismo commit de Quimera obtienen la misma versión de CHIMERA. El pin inicial (`de56981`) conserva el soporte de español de la rama `personal/speak-ui-experiment`; upstream aún no lo contiene. Al actualizar, confirma primero que español y la API de la cabeza siguen presentes. No apuntes a `main` como dependencia sin fijar un commit y revisar el cambio. La inicialización, actualizaci?n normal, prueba de PR y resoluci?n de conflictos est?n en [`../AGENTS.md`](../AGENTS.md).
+`chimera/` es el fork de CHIMERA incorporado como Git submodule. El padre guarda un gitlink a un SHA específico; dos clones del mismo commit de Quimera obtienen la misma versión de CHIMERA. El pin actual (`03bb115`, PR #81 head) incluye el soporte de español con dialectos (seseo, rioplatense, castellano) y la API de body rig (`src/rig/`). Al actualizar, confirma primero que español y la API de la cabeza siguen presentes. No apuntes a `main` como dependencia sin fijar un commit y revisar el cambio. La inicialización, actualización normal, prueba de PR y resolución de conflictos están en [`../AGENTS.md`](../AGENTS.md).
 
 El submódulo permite consumir hoy el código de UI que aún no se publica como biblioteca. La
 integración usa módulos internos de CHIMERA, así que puede requerir ajustes cuando cambie upstream.
