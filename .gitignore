@@ -4,3 +4,4 @@ coverage/
 chimera/target/
 chimera/src/wasm/chimera.wasm
 *.log
+.vscode

@@ -32,10 +32,14 @@ import {
   type OutfitTuningKey,
 } from "./layers/outfitTuning.ts";
 import {
+  HAIR_DEBUG_VIEWS,
   HAIR_TUNING_RANGES,
+  getHairDebugView,
   getHairTuning,
   resetHairTuning,
+  setHairDebugView,
   setHairTuning,
+  type HairDebugView,
   type HairNumericKey,
 } from "./layers/hairTuning.ts";
 
@@ -59,10 +63,15 @@ const HAIR_SLIDERS: Array<{ key: HairNumericKey; label: string; step: number }> 
   { key: "contourAlpha", label: "Contorno", step: 0.01 },
   { key: "bodyAlpha", label: "Masa", step: 0.01 },
   { key: "sway", label: "Balanceo", step: 0.02 },
+  { key: "spread", label: "Separación cm", step: 0.05 },
+  { key: "clump", label: "Agrupamiento", step: 0.01 },
+  { key: "guideCount", label: "Guías", step: 1 },
 ];
 
 export function SceneApp() {
   const [mode, setMode] = useState<AppMode>("scene");
+  // Diagnóstico del pelo: no se guarda en el JSON, solo alterna qué trazos se dibujan.
+  const [hairDebug, setHairDebug] = useState<HairDebugView>(() => getHairDebugView());
 
   // ── Global Stage Appearance ──
   const [headLook, setHeadLook] = useState<HeadLookName>("vocal");
@@ -293,8 +302,18 @@ export function SceneApp() {
       contourAlpha: d.contourAlpha,
       bodyAlpha: d.bodyAlpha,
       sway: d.sway,
+      spread: d.spread,
+      clump: d.clump,
+      guideCount: d.guideCount,
       color: d.color,
     });
+  };
+
+  const cycleHairDebug = () => {
+    const i = HAIR_DEBUG_VIEWS.indexOf(hairDebug);
+    const next = HAIR_DEBUG_VIEWS[(i + 1) % HAIR_DEBUG_VIEWS.length];
+    setHairDebugView(next);
+    setHairDebug(next);
   };
 
   const addCharacter = () => {
@@ -882,13 +901,23 @@ export function SceneApp() {
                                 />
                               </label>
                             </div>
-                            <button
-                              type="button"
-                              className="quimera-btn-small"
-                              onClick={() => resetHairStyle(ch)}
-                            >
-                              Restablecer
-                            </button>
+                            <div className="quimera-char-card-row">
+                              <button
+                                type="button"
+                                className="quimera-btn-small"
+                                onClick={() => resetHairStyle(ch)}
+                              >
+                                Restablecer
+                              </button>
+                              <button
+                                type="button"
+                                className="quimera-btn-small"
+                                onClick={cycleHairDebug}
+                                title="Alterna entre todos los trazos, solo guías, solo hijas y solo contorno"
+                              >
+                                Diagnóstico: {hairDebug === "all" ? "todo" : hairDebug === "guides" ? "guías" : hairDebug === "daughters" ? "hijas" : "contorno"}
+                              </button>
+                            </div>
                           </details>
                         )}
                       </div>

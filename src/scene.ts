@@ -81,21 +81,27 @@ export interface OutfitLayer extends BodyLayer {
   offset?: number;
 }
 
-/** Pelo corto o largo, hecho de cintas de hebras finas sobre la malla de la cabeza. */
+/** Pelo corto o largo: hebras guía e hijas finas y aditivas sobre la malla de la cabeza. */
 export interface HairLayer extends BodyLayer {
   variant?: "short" | "long";
   /** Longitud relativa dentro de la variante, 0 a 1. Por defecto 0.5. */
   length?: number;
   /** Barrido lateral sobre el hombro: −1 izquierda, 0 simétrico, +1 derecha. */
   sweep?: number;
-  /** Alpha de cada hebra, 0 a 1. Por defecto 0.35. */
+  /** Alpha de cada hebra, 0 a 1. Por defecto 0.14. */
   strandAlpha?: number;
   /** Alpha del contorno del volumen, 0 a 1. Por defecto 0.7. */
   contourAlpha?: number;
-  /** Alpha del tinte de masa por mechón, 0 a 0.3. Por defecto 0.08. */
+  /** Alpha del núcleo de masa por guía, 0 a 0.3. Por defecto 0.03. */
   bodyAlpha?: number;
   /** Ganancia del balanceo por velocidad angular, 0 a 2. Por defecto 1. */
   sway?: number;
+  /** Separación lateral mínima entre hijas en cm, 0.6 a 1.8. Por defecto 1.0. */
+  spread?: number;
+  /** Cuánto se acerca una hija a su guía: 0 = 30 %, 1 = 60 %. Por defecto 0.5. */
+  clump?: number;
+  /** Guías objetivo con densidad 1, 30 a 70. Por defecto 70. */
+  guideCount?: number;
 }
 
 export type CharacterLayers = {
@@ -276,7 +282,10 @@ function validateLayers(value: unknown, where: string): CharacterLayers | undefi
         throw new Error(`${where}: "hair.length" debe estar entre 0 y 1.`);
       }
       if (l.detail !== undefined) throw new Error(`${where}: "hair.detail" solo aplica a la capa de ropa.`);
-      const tuningKeys = ["density", "length", "sweep", "strandAlpha", "contourAlpha", "bodyAlpha", "sway"] as const;
+      const tuningKeys = [
+        "density", "length", "sweep", "strandAlpha", "contourAlpha", "bodyAlpha", "sway",
+        "spread", "clump", "guideCount",
+      ] as const;
       const tuning: Partial<HairLayer> = {};
       for (const key of tuningKeys) {
         const value = l[key];

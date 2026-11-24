@@ -1,20 +1,21 @@
 /**
  * Capa de pelo sobre la cabeza del rig: materia hecha de luz.
  *
- * Tres componentes dibujados con UN solo `LineSegments`:
- *   1) mechones: 40..90 cintas de 8..40 hebras que comparten raíz, dirección, largo y fase;
- *   2) contorno: 4 líneas más claras (arco de nacimiento, dos laterales y nuca);
- *   3) tinte: una cinta central por mechón con `uBodyAlpha` bajo para dar masa sin relleno plano.
+ * Un solo `LineSegments` dibuja cuatro clases de trazo, todas finas y aditivas:
+ *   1) guías (30..70): definen la caída y la onda de cada región del cuero cabelludo;
+ *   2) hijas (600..3000): raíz propia repartida por el scalp, forma transportada desde las 2 o 3
+ *      guías más cercanas, más onda, largo y brillo individuales;
+ *   3) contorno (4 líneas suavizadas con spline, 18 puntos): nacimiento, laterales y nuca;
+ *   4) núcleo de masa por guía, con `uBodyAlpha` muy bajo (0,03), sin cintas duras.
  *
- * Las raíces se eligen sobre la malla que `wearHead()` añade al rig: el tono atenuado del cuero
- * cabelludo (rig.tone) y la posición de reposo (x delantero, y vertical, z lateral) dejan fuera la
- * frente, los ojos, la nariz, la boca y la mandíbula. Cada frame se reconstruyen las polilíneas desde
- * los vértices ya skinneados de esas raíces y desde la rotación del hueso `head`, sin tocar la cabeza.
- * El choque con torso, cuello y hombros son cápsulas leales a los huesos posados del rig.
+ * Las raíces salen de la malla que `wearHead()` añade al rig. El cono delantero, la mandíbula y el
+ * cuello quedan fuera por dos filtros: una restricción de ángulo/altura al elegir raíces y un
+ * `frontLimit(y)` que prohíbe cualquier trazo por delante de la cara. Las cápsulas del torso empujan el
+ * pelo hacia atrás, no hacia delante, para que el lip-sync quede despejado. Todo se reconstruye cada
+ * frame desde vértices skinneados y la rotación del hueso `head`, sin tocar la cabeza.
  *
- * Determinista: mulberry32 con (seed del JSON + hash del id) para elegir raíces, jitter y fases.
- * Los ajustes del panel no reconstruyen la escena: cambian uniforms, el drawRange y los buffers de
- * posición de esta geometría, que se reserva una sola vez con el máximo número de hebras.
+ * Determinista: mulberry32 con (seed del JSON + hash del id). El panel cambia uniforms, alphas y el
+ * `drawRange` de buffers reservados una sola vez; no reconstruye la escena.
  */
 
 import * as THREE from "three";
@@ -24,25 +25,42 @@ import {
   seedFromId,
 } from "./common.ts";
 import {
+  HAIR_COLOR_HIGH,
+  HAIR_COLOR_LOW,
   HAIR_TUNING_DEFAULTS,
+  type HairDebugView,
   type HairTuning,
 } from "./hairTuning.ts";
 
-const MIN_STRANDS = 40;
-const MAX_STRANDS = 90;
-const MIN_THREADS = 8;
-const MAX_THREADS = 40;
-/** Puntos por polilínea en reposo (6..10 según el encargo). */
+const MIN_GUIDES = 30;
+const MAX_GUIDES = 70;
+const MIN_DAUGHTERS = 600;
+const MAX_DAUGHTERS = 3000;
+/** Puntos por guía/hija: 8 bastan para 1–2 ondas y mantienen bajo el coste por frame. */
 const POINTS = 8;
 const SEGMENTS = POINTS - 1;
+/** Los contornos usan más muestras para que la spline no se vea angular. */
+const CONTOUR_POINTS = 18;
+const CONTOUR_SEGMENTS = CONTOUR_POINTS - 1;
 const CONTOURS = 4;
-/** El tinte por mechón se marca con aStrand <= -10; el contorno con -1..-4. */
-const TINT_MARK = -10;
+const ROOT_MIN_GAP = 0.6; // cm entre raíces de hijas vecinas
+const ROOT_SAMPLES = 120000;
+/** Centro aproximado de la cabeza en x (medido en el rig); delantero = +x. */
+const HEAD_CENTER_X = 5.4;
+const CONTOUR_NOMINAL_LONG = 46;
+
+/** Marcas de `aKind`: contorno -1..-8, guía -10..-99, núcleo <= -100, hija >= 0. */
+const GUIDE_MARK = -10;
+const TINT_MARK = -100;
 
 const HAIR_VERT = /* glsl */ `
 attribute float aAlpha;
-attribute float aPhase;
-attribute float aStrand;
+attribute float aTone;
+attribute float aGain;
+attribute float aKind;
+uniform vec3 uColorLow;
+uniform vec3 uColorHigh;
+uniform vec3 uDefaultColor;
 uniform vec3 uColor;
 uniform vec3 uContourColor;
 uniform float uStrandAlpha;
@@ -51,11 +69,15 @@ uniform float uBodyAlpha;
 varying float vAlpha;
 varying vec3 vColor;
 void main() {
-  float contour = step(aStrand, -0.5) * (1.0 - step(aStrand, -9.5));
-  float tint = step(aStrand, -9.5);
-  float band = 0.94 + 0.06 * fract(abs(aPhase) * 0.1591549 + aStrand * 0.031);
-  vColor = mix(uColor, uContourColor, contour) * band;
-  vAlpha = aAlpha * mix(mix(uStrandAlpha, uContourAlpha, contour), uBodyAlpha, tint);
+  float contour = step(aKind, -0.5) * (1.0 - step(aKind, -9.5));
+  float guide = step(aKind, -9.5) * (1.0 - step(aKind, -99.5));
+  float tint = step(aKind, -99.5);
+  vec3 grad = mix(uColorLow, uColorHigh, clamp(aTone, 0.0, 1.0));
+  grad *= uColor / max(uDefaultColor, vec3(0.001));
+  vColor = mix(grad * aGain, uContourColor, contour) * (1.0 - 0.55 * tint);
+  float base = mix(mix(uStrandAlpha, uContourAlpha, contour), uBodyAlpha, tint);
+  base = mix(base, uContourAlpha * 0.85, guide);
+  vAlpha = aAlpha * base;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -65,8 +87,8 @@ ${LAYER_UTILS_GLSL}
 varying float vAlpha;
 varying vec3 vColor;
 void main() {
-  if (vAlpha < 0.004) discard;
-  // LineSegments: un píxel de ancho en todas las plataformas; el color va en luz lineal, como el cuerpo.
+  if (vAlpha < 0.002) discard;
+  // Mezcla aditiva: el alpha es la intensidad de la hebra; color en luz lineal codificada.
   gl_FragColor = vec4(layerEncode(vColor), vAlpha);
 }
 `;
@@ -83,44 +105,75 @@ export interface HairSpec {
   contourAlpha?: number;
   bodyAlpha?: number;
   sway?: number;
+  spread?: number;
+  clump?: number;
+  guideCount?: number;
 }
 
 export interface HairLayerHandle {
   setVisible(visible: boolean): void;
   setSpec(spec: HairSpec | undefined): void;
   setTuning(tuning: HairTuning): void;
+  setDebug(view: HairDebugView): void;
   /** Reconstruye las polilíneas desde `skinned` (vértices del rig ya posados). */
   update(skinned: Float32Array, dt: number, time: number): void;
+  stats(): { guides: number; daughters: number; placedDaughters: number; contours: number; vertices: number };
   dispose(): void;
 }
 
-interface StrandTemplate {
-  /** Vértice del rig usado como raíz. */
-  root: number;
-  /** Desplazamientos en reposo relativos a la raíz, en unidades de "largo total = 1". */
+interface GuideTemplate {
+  vertex: number;
+  rootX: number;
+  rootY: number;
+  rootZ: number;
+  /** Caída larga y corta en unidades de "largo total = 1", relativas a la raíz. */
   offsets: Float32Array;
-  /** Dirección radial de la raíz (x delantero, z lateral), ya normalizada. */
-  radial: THREE.Vector3;
+  shortOffsets: Float32Array;
+  radialX: number;
+  radialZ: number;
+  tangentX: number;
+  tangentZ: number;
   phase: number;
-  gain: number;
+  waveAmp: number;
+  waveFreq: number;
   lengthScale: number;
-  /** Jitter fijo por hebra (0.4..1.0 cm), antes de rotar con la cabeza. */
-  jitter: Float32Array;
-  /** Ganancia de alpha por hebra, para que la cinta no parezca una sola línea. */
-  threadGain: Float32Array;
+}
+
+interface DaughterTemplate {
+  rootX: number;
+  rootY: number;
+  rootZ: number;
+  anchor: number;
+  tangentX: number;
+  tangentZ: number;
+  /** Magnitud con signo de la separación lateral respecto de la guía, en cm. */
+  spread: number;
+  waveAmp: number;
+  waveFreq: number;
+  wavePhase: number;
+  lengthScale: number;
+  gain: number;
+  tone: number;
+  guide: Int16Array;
+  weight: Float32Array;
 }
 
 interface ContourTemplate {
-  root: number;
-  /** Puntos en cm, relativos a la raíz (no se escalan por el largo). */
+  vertex: number;
   points: Float32Array;
+  /** false = puntos en cm sobre el scalp; true = offsets unitarios que escalan con el largo. */
+  unit: boolean;
 }
 
 interface Capsule {
   a: number;
   b: number;
   radius: number;
+  /** Empuja hacia −x (detrás del cuerpo) en vez de hacia la cámara. */
+  backBias?: boolean;
 }
+
+interface RootPoint { v: number; x: number; y: number; z: number; u: number }
 
 /** Generador determinista pequeño, sin dependencias. */
 function mulberry32(seed: number): () => number {
@@ -144,36 +197,70 @@ function rotateInto(q: THREE.Quaternion, x: number, y: number, z: number, out: F
   out[o + 2] = z + q.w * tz + q.x * ty - q.y * tx;
 }
 
-/**
- * Raíces del cuero cabelludo: tono atenuado de la malla de la cabeza, por encima del cuello y con
- * ángulo lateral/back. `x` es delantero, así que |ángulo| pequeño queda excluido (frente, ojos,
- * nariz, boca y mandíbula). Si un rig viniera sin el tono del scalp, el fallback usa sólo geometría.
- */
-function pickRootCandidates(rig: any): { v: number; x: number; y: number; z: number; u: number }[] {
-  const rest = rig.rest as Float32Array;
-  const candidates: { v: number; x: number; y: number; z: number; u: number }[] = [];
-  const push = (v: number, x: number, y: number, z: number, u: number) => candidates.push({ v, x, y, z, u });
-  for (let v = rig.bodyVertices; v < rig.n; v++) {
-    const x = rest[3 * v], y = rest[3 * v + 1], z = rest[3 * v + 2];
-    if (y < 78 || y > 94) continue;
-    const theta = Math.atan2(z, x - 3.0);
-    if (Math.abs(theta) < 0.75) continue;
-    const u = theta < 0 ? theta + 2 * Math.PI : theta;
-    if (rig.tone[v] < 0.85 || (y > 78 && rig.tone[v] < 0.98)) push(v, x, y, z, u);
-  }
-  return candidates;
+const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
+
+/** Caída del alpha en el último 20 %: la punta se desvanece, no acaba en corte seco. */
+function tipFade(t: number): number {
+  if (t <= 0.8) return 1;
+  return Math.pow((1 - t) / 0.2, 1.5);
 }
 
-/** Reparte índices de forma uniforme entre cubos (ángulo × altura) para que cualquier prefijo esté bien distribuido. */
-function spreadRoots(candidates: ReturnType<typeof pickRootCandidates>, rng: () => number): typeof candidates {
-  if (candidates.length <= MAX_STRANDS) return [...candidates];
+/**
+ * Frente máximo permitido por altura, en coordenadas de reposo de la cabeza. Por encima de los
+ * 86 cm el cráneo puede avanzar; por debajo del cuello el pelo queda claramente detrás del torso.
+ * Es una pared en el marco de la cabeza: gira con ella y no depende de la cámara.
+ */
+const FRONT_Y = new Float32Array([60, 70, 78, 82, 86, 90, 100]);
+const FRONT_X = new Float32Array([0, 2, 6, 9, 11, 12, 12]);
+
+function frontLimit(y: number): number {
+  if (y <= 60) return 0;
+  if (y >= 100) return 12;
+  for (let i = 1; i < FRONT_Y.length; i++) {
+    if (y <= FRONT_Y[i]) {
+      return FRONT_X[i - 1] + ((FRONT_X[i] - FRONT_X[i - 1]) * (y - FRONT_Y[i - 1])) / (FRONT_Y[i] - FRONT_Y[i - 1]);
+    }
+  }
+  return 12;
+}
+
+/** Cuero cabelludo permitido: nuca, laterales y coronilla, nunca cara ni mandíbula. */
+function isScalp(rig: any, v: number): boolean {
+  const rest = rig.rest as Float32Array;
+  const x = rest[3 * v], y = rest[3 * v + 1], z = rest[3 * v + 2];
+  if (y < 78 || y > 94) return false;
+  if (Math.abs(Math.atan2(z, x - HEAD_CENTER_X)) < 0.75) return false;
+  if (x > frontLimit(y) + 0.4) return false;
+  const tone = rig.tone?.[v] ?? 1;
+  return tone < 0.85 || (y > 78 && tone < 0.98);
+}
+
+function rootU(rig: any, v: number): number {
+  const rest = rig.rest as Float32Array;
+  const theta = Math.atan2(rest[3 * v + 2], rest[3 * v] - HEAD_CENTER_X);
+  return theta < 0 ? theta + 2 * Math.PI : theta;
+}
+
+function pickRootCandidates(rig: any): RootPoint[] {
+  const rest = rig.rest as Float32Array;
+  const out: RootPoint[] = [];
+  for (let v = rig.bodyVertices; v < rig.n; v++) {
+    if (!isScalp(rig, v)) continue;
+    out.push({ v, x: rest[3 * v], y: rest[3 * v + 1], z: rest[3 * v + 2], u: rootU(rig, v) });
+  }
+  return out;
+}
+
+/** Reparte guías entre cubos (ángulo × altura) para que cualquier prefijo esté bien distribuido. */
+function spreadRoots(candidates: RootPoint[], rng: () => number): RootPoint[] {
+  if (candidates.length <= MAX_GUIDES) return [...candidates];
   let minY = Infinity, maxY = -Infinity;
   for (const c of candidates) {
     minY = Math.min(minY, c.y);
     maxY = Math.max(maxY, c.y);
   }
   const ANGLE_BUCKETS = 14, HEIGHT_BUCKETS = 5;
-  const buckets: (typeof candidates)[] = Array.from({ length: ANGLE_BUCKETS * HEIGHT_BUCKETS }, () => []);
+  const buckets: RootPoint[][] = Array.from({ length: ANGLE_BUCKETS * HEIGHT_BUCKETS }, () => []);
   for (const c of candidates) {
     const a = Math.min(ANGLE_BUCKETS - 1, Math.floor((c.u / (2 * Math.PI)) * ANGLE_BUCKETS));
     const h = Math.min(HEIGHT_BUCKETS - 1, Math.floor(((c.y - minY) / (maxY - minY + 1e-6)) * HEIGHT_BUCKETS));
@@ -184,9 +271,8 @@ function spreadRoots(candidates: ReturnType<typeof pickRootCandidates>, rng: () 
     const j = Math.floor(rng() * (i + 1));
     [order[i], order[j]] = [order[j], order[i]];
   }
-  const picked: typeof candidates = [];
-  // Una vuelta por cubo y, si faltan, se completan con los que queden en los cubos más poblados.
-  for (let round = 0; picked.length < MAX_STRANDS; round++) {
+  const picked: RootPoint[] = [];
+  for (let round = 0; picked.length < MAX_GUIDES; round++) {
     let added = false;
     for (const b of order) {
       const list = buckets[b];
@@ -196,45 +282,173 @@ function spreadRoots(candidates: ReturnType<typeof pickRootCandidates>, rng: () 
       list[i] = list[list.length - 1];
       list.pop();
       added = true;
-      if (picked.length >= MAX_STRANDS) break;
+      if (picked.length >= MAX_GUIDES) break;
     }
     if (!added) break;
   }
-  return picked.length >= MIN_STRANDS ? picked : candidates.slice(0, MAX_STRANDS);
+  return picked.length >= MIN_GUIDES ? picked : candidates.slice(0, MAX_GUIDES);
 }
 
-/** Fallback geométrico si el rig no trae el tono del scalp: sólo nuca, laterales y coronilla. */
-function geometricFallback(rig: any): ReturnType<typeof pickRootCandidates> {
+/** Un mechón degenerado si un rig raro no ofrece ningún vértice de scalp. */
+function fallbackCandidate(rig: any): RootPoint {
   const rest = rig.rest as Float32Array;
-  const out: ReturnType<typeof pickRootCandidates> = [];
-  for (let v = rig.bodyVertices; v < rig.n; v++) {
-    const x = rest[3 * v], y = rest[3 * v + 1], z = rest[3 * v + 2];
-    if (y < 78 || y > 94) continue;
-    const theta = Math.atan2(z, x - 3.0);
-    if (Math.abs(theta) < 0.9) continue;
-    out.push({ v, x, y, z, u: theta < 0 ? theta + 2 * Math.PI : theta });
-  }
-  return out.slice(0, MAX_STRANDS * 2);
+  const v = Math.min(rig.n - 1, rig.bodyVertices);
+  return { v, x: rest[3 * v], y: rest[3 * v + 1], z: rest[3 * v + 2], u: Math.PI };
 }
 
-/** Interpola una lista de puntos de reposo a POINTS muestras equiespaciadas. */
-function resample(points: THREE.Vector3[]): Float32Array {
-  const distances = [0];
-  for (let i = 1; i < points.length; i++) distances.push(distances[i - 1] + points[i].distanceTo(points[i - 1]));
-  const total = distances[distances.length - 1] || 1;
-  const out = new Float32Array(POINTS * 3);
-  let j = 0;
-  for (let i = 0; i < POINTS; i++) {
-    const d = (i / (POINTS - 1)) * total;
-    while (j < distances.length - 2 && distances[j + 1] < d) j++;
-    const span = distances[j + 1] - distances[j] || 1;
-    const t = (d - distances[j]) / span;
-    const a = points[j], b = points[j + 1];
-    out[3 * i] = a.x + (b.x - a.x) * t;
-    out[3 * i + 1] = a.y + (b.y - a.y) * t;
-    out[3 * i + 2] = a.z + (b.z - a.z) * t;
+/** Cuadrículas de la malla de la cabeza enteramente dentro del scalp permitido. */
+function scalpQuads(rig: any): number[] {
+  const quads = rig.quads as Int32Array | number[];
+  const out: number[] = [];
+  for (let f = 0; f < quads.length / 4; f++) {
+    const i0 = quads[4 * f], i1 = quads[4 * f + 1], i2 = quads[4 * f + 2], i3 = quads[4 * f + 3];
+    if (isScalp(rig, i0) && isScalp(rig, i1) && isScalp(rig, i2) && isScalp(rig, i3)) out.push(f);
   }
   return out;
+}
+
+/**
+ * Raíces de hijas repartidas por la superficie del scalp con separación mínima de 0,6 cm. Si no
+ * caben 3000, se entregan menos: el panel baja la cuenta antes que acercar hebras.
+ */
+function sampleDaughterRoots(rig: any, candidates: RootPoint[], rng: () => number): DaughterTemplate[] {
+  const rest = rig.rest as Float32Array;
+  const quads = scalpQuads(rig);
+  const out: DaughterTemplate[] = [];
+  if (!quads.length || !candidates.length) return out;
+  const cell = ROOT_MIN_GAP;
+  const occupied = new Map<string, number[]>();
+  const key = (ix: number, iy: number, iz: number) => `${ix},${iy},${iz}`;
+  for (let attempt = 0; attempt < ROOT_SAMPLES && out.length < MAX_DAUGHTERS; attempt++) {
+    const f = quads[Math.floor(rng() * quads.length)];
+    const s = rng(), t = rng();
+    const i0 = (rig.quads as Int32Array)[4 * f], i1 = (rig.quads as Int32Array)[4 * f + 1];
+    const i2 = (rig.quads as Int32Array)[4 * f + 2], i3 = (rig.quads as Int32Array)[4 * f + 3];
+    const p: [number, number, number] = [0, 0, 0];
+    for (let c = 0; c < 3; c++) {
+      const a = rest[3 * i0 + c], b = rest[3 * i1 + c], d = rest[3 * i2 + c], e = rest[3 * i3 + c];
+      p[c] = (1 - s) * ((1 - t) * a + t * e) + s * ((1 - t) * b + t * d);
+    }
+    const [x, y, z] = p;
+    if (y < 78 || y > 94 || x > frontLimit(y) + 0.25) continue;
+    if (Math.abs(Math.atan2(z, x - HEAD_CENTER_X)) < 0.75) continue;
+    const ix = Math.floor(x / cell), iy = Math.floor(y / cell), iz = Math.floor(z / cell);
+    let tooClose = false;
+    for (let dx = -1; dx <= 1 && !tooClose; dx++) {
+      for (let dy = -1; dy <= 1 && !tooClose; dy++) {
+        for (let dz = -1; dz <= 1 && !tooClose; dz++) {
+          for (const j of occupied.get(key(ix + dx, iy + dy, iz + dz)) ?? []) {
+            const q = out[j];
+            if (Math.hypot(q.rootX - x, q.rootY - y, q.rootZ - z) < ROOT_MIN_GAP) { tooClose = true; break; }
+          }
+        }
+      }
+    }
+    if (tooClose) continue;
+    let anchor = candidates[0];
+    let best = Infinity;
+    for (const c of candidates) {
+      const d = (c.x - x) ** 2 + (c.y - y) ** 2 + (c.z - z) ** 2;
+      if (d < best) { best = d; anchor = c; }
+    }
+    const rx = x - HEAD_CENTER_X;
+    const len = Math.hypot(rx, z) || 1;
+    const radialX = rx / len, radialZ = z / len;
+    // Tangente horizontal alrededor del cráneo: en la vista frontal es la dirección visible.
+    const tl = Math.hypot(radialZ, radialX) || 1;
+    const sign = rng() < 0.5 ? -1 : 1;
+    out.push({
+      rootX: x, rootY: y, rootZ: z,
+      anchor: anchor.v,
+      tangentX: (-radialZ / tl) * sign,
+      tangentZ: (radialX / tl) * sign,
+      spread: 0.5 + rng() * 0.5,
+      waveAmp: 0.5 + rng(), // 0.5..1.5 cm
+      waveFreq: 1 + rng(), // 1..2 ondas por hebra
+      wavePhase: rng() * Math.PI * 2,
+      lengthScale: 0.88 + rng() * 0.24, // ±12 %
+      gain: 0.65 + rng() * 0.7, // ±35 %
+      tone: rng(),
+      guide: new Int16Array(3),
+      weight: new Float32Array(3),
+    });
+    const k = key(ix, iy, iz);
+    const list = occupied.get(k) ?? [];
+    list.push(out.length - 1);
+    occupied.set(k, list);
+  }
+  return out;
+}
+
+/** Asigna a cada hija sus 3 guías más cercanas y pesos por distancia inversa. */
+function bindGuides(daughters: DaughterTemplate[], guides: GuideTemplate[]): void {
+  if (!guides.length) return;
+  for (const d of daughters) {
+    let best: number[] = [];
+    let bestD = [Infinity, Infinity, Infinity];
+    for (let g = 0; g < guides.length; g++) {
+      const s = guides[g];
+      const dx = s.rootX - d.rootX, dy = (s.rootY - d.rootY) * 0.75, dz = (s.rootZ - d.rootZ) * 0.7;
+      const dist = dx * dx + dy * dy + dz * dz;
+      if (dist >= bestD[2]) continue;
+      let i = 0;
+      while (i < 3 && dist >= bestD[i]) i++;
+      if (i >= 3) continue;
+      for (let j = 2; j > i; j--) { bestD[j] = bestD[j - 1]; best[j] = best[j - 1]; }
+      bestD[i] = dist; best[i] = g;
+    }
+    let sum = 0;
+    for (let i = 0; i < 3; i++) {
+      const g = best[i] ?? 0;
+      const w = 1 / Math.sqrt(bestD[i] + 1);
+      d.guide[i] = g;
+      d.weight[i] = w;
+      sum += w;
+    }
+    for (let i = 0; i < 3; i++) d.weight[i] /= sum || 1;
+  }
+}
+
+/** Muestreo lineal de la plantilla unitaria de una guía en el parámetro t. */
+function guideOffset(s: GuideTemplate, t: number, short: boolean, out: Float32Array, o: number): void {
+  const src = short ? s.shortOffsets : s.offsets;
+  const u = t * SEGMENTS;
+  const i = Math.min(SEGMENTS - 1, Math.floor(u));
+  const f = u - i;
+  for (let c = 0; c < 3; c++) {
+    out[o + c] = src[3 * i + c] * (1 - f) + src[3 * (i + 1) + c] * f;
+  }
+}
+
+/** Catmull-Rom uniforme: suaviza el arco de nacimiento y las guías de contorno a 18 puntos. */
+function resampleSpline(points: THREE.Vector3[], count: number): Float32Array {
+  const n = points.length;
+  const out = new Float32Array(count * 3);
+  const at = (i: number, c: number) => points[clamp(i, 0, n - 1)].getComponent(c);
+  for (let i = 0; i < count; i++) {
+    const u = (i / (count - 1)) * (n - 1);
+    const p1 = Math.min(n - 1, Math.floor(u));
+    const f = u - p1;
+    const p0 = p1 - 1, p2 = p1 + 1, p3 = p1 + 2;
+    for (let c = 0; c < 3; c++) {
+      const a = at(p0, c), b = at(p1, c), d = at(p2, c), e = at(p3, c);
+      out[3 * i + c] = 0.5 * ((2 * b) + (-a + d) * f + (2 * a - 5 * b + 4 * d - e) * f * f + (-a + 3 * b - 3 * d + e) * f * f * f);
+    }
+  }
+  return out;
+}
+
+/** Escribe una polilínea como segmentos de `LineSegments`. */
+function writePolyline(positions: Float32Array, points: Float32Array, count: number, start: number): void {
+  let o = start * 3;
+  for (let seg = 0; seg < count - 1; seg++) {
+    for (let k = 0; k < 2; k++) {
+      const p = 3 * (seg + k);
+      positions[o++] = points[p];
+      positions[o++] = points[p + 1];
+      positions[o++] = points[p + 2];
+    }
+  }
 }
 
 export function createHairLayer(
@@ -247,168 +461,141 @@ export function createHairLayer(
   const rng = mulberry32(seed);
   const rest = rig.rest as Float32Array;
   const candidates = pickRootCandidates(rig);
-  const selected = spreadRoots(candidates.length >= MIN_STRANDS ? candidates : geometricFallback(rig), rng);
+  const selected = spreadRoots(candidates.length ? candidates : [fallbackCandidate(rig)], rng);
 
-  // ── Plantillas de mechones (en reposo, relativas a la raíz, largo unitario) ──
-  const strands: StrandTemplate[] = [];
+  // ── Guías: una plantilla de caída larga y otra que sigue el cráneo para `short` ──
+  const guides: GuideTemplate[] = [];
   for (const root of selected) {
     const origin = new THREE.Vector3(root.x, root.y, root.z);
-    const radial = new THREE.Vector3(root.x - 3.0, 0, root.z);
+    const radial = new THREE.Vector3(root.x - HEAD_CENTER_X, 0, root.z);
     if (radial.lengthSq() < 1e-4) radial.set(0, 0, root.z >= 0 ? 1 : -1);
     radial.normalize();
-    const offsets = new Float32Array(POINTS * 3);
-    const cursor = origin.clone();
-    for (let i = 0; i < POINTS; i++) {
-      const t = i / (POINTS - 1);
-      // Sobre el cráneo la hebra sale radial y hacia abajo; luego cede a la gravedad.
-      const dir = radial.clone().multiplyScalar(0.8 * (1 - t));
-      dir.x -= 0.18 * (1 - t);
-      dir.y -= 1;
-      dir.normalize();
-      cursor.addScaledVector(dir, 1 / (POINTS - 1));
-      offsets[3 * i] = cursor.x - origin.x;
-      offsets[3 * i + 1] = cursor.y - origin.y;
-      offsets[3 * i + 2] = cursor.z - origin.z;
-    }
-    const jitter = new Float32Array(MAX_THREADS * 3);
-    const threadGain = new Float32Array(MAX_THREADS);
-    for (let t = 0; t < MAX_THREADS; t++) {
-      const angle = rng() * Math.PI * 2;
-      const r = 0.4 + rng() * 0.6; // 0.4..1.0 cm: con 40 hebras la cinta necesita más anchura
-      jitter[3 * t] = Math.cos(angle) * r;
-      jitter[3 * t + 1] = (rng() - 0.5) * 0.15;
-      jitter[3 * t + 2] = Math.sin(angle) * r;
-      threadGain[t] = 0.92 + rng() * 0.16;
-    }
-    strands.push({
-      root: root.v,
-      offsets,
-      radial,
+    // Nunca empujar hacia delante: el frente del cráneo se deja a la cara.
+    radial.x = Math.min(radial.x, 0.05);
+    const tangentX = -radial.z, tangentZ = radial.x;
+    const build = (skull: boolean) => {
+      const offsets = new Float32Array(POINTS * 3);
+      const cursor = origin.clone();
+      for (let i = 0; i < POINTS; i++) {
+        const t = i / SEGMENTS;
+        const dir = radial.clone().multiplyScalar((skull ? 0.95 : 0.6) * (1 - t));
+        dir.x -= 0.22 * (1 - t);
+        dir.y -= skull ? 0.35 + 0.65 * t : 1;
+        dir.normalize();
+        cursor.addScaledVector(dir, 1 / SEGMENTS);
+        offsets[3 * i] = cursor.x - origin.x;
+        offsets[3 * i + 1] = cursor.y - origin.y;
+        offsets[3 * i + 2] = cursor.z - origin.z;
+      }
+      return offsets;
+    };
+    guides.push({
+      vertex: root.v,
+      rootX: root.x, rootY: root.y, rootZ: root.z,
+      offsets: build(false),
+      shortOffsets: build(true),
+      radialX: radial.x, radialZ: radial.z,
+      tangentX, tangentZ,
       phase: rng() * Math.PI * 2,
-      gain: 0.75 + rng() * 0.5, // bandas de brillo: ±25 %
-      lengthScale: 1,
-      jitter,
-      threadGain,
+      waveAmp: 0.5 + rng() * 0.6,
+      waveFreq: 1 + rng() * 0.35,
+      lengthScale: 0.94 + rng() * 0.12,
     });
   }
-  // Si un rig raro no ofrece suficientes raíces, se degenera a un mechón sobre el hueso head.
-  if (!strands.length) {
-    const v = rig.bodyVertices > 0 ? rig.bodyVertices : 0;
-    const offsets = new Float32Array(POINTS * 3);
-    for (let i = 0; i < POINTS; i++) offsets[3 * i + 1] = -i / (POINTS - 1);
-    strands.push({
-      root: v,
-      offsets,
-      radial: new THREE.Vector3(0, 0, 1),
-      phase: 0,
-      gain: 1,
-      lengthScale: 1,
-      jitter: new Float32Array(MAX_THREADS * 3),
-      threadGain: new Float32Array(MAX_THREADS).fill(1),
-    });
-  }
-  const strandCount = strands.length;
+  const guideCount = guides.length;
 
-  // ── Contorno: arco de nacimiento, laterales y nuca (4 líneas) ──
-  const byAngle = strands.slice().sort((a, b) => rootU(a) - rootU(b));
-  const arcPoints: THREE.Vector3[] = [];
-  for (const s of byAngle) {
-    const u = rootU(s);
-    if (u < 0.75 || u > 2 * Math.PI - 0.75) continue;
-    const o = 3 * s.root;
-    arcPoints.push(new THREE.Vector3(
-      rest[o] + s.radial.x * 1.2,
-      rest[o + 1] + 0.4,
-      rest[o + 2] + s.radial.z * 1.2
-    ));
-  }
+  // ── Hijas con separación mínima y transporte desde sus guías ──
+  const daughters = sampleDaughterRoots(rig, candidates, rng);
+  bindGuides(daughters, guides);
+  const daughterCount = daughters.length;
+
+  // ── Contornos: spline sobre el nacimiento y tres guías de volumen ──
   const contours: ContourTemplate[] = [];
-  if (arcPoints.length >= 2) {
-    const anchor = arcPoints[0];
-    const arc = resample(arcPoints);
-    for (let i = 0; i < POINTS; i++) {
-      arc[3 * i] -= anchor.x;
-      arc[3 * i + 1] -= anchor.y;
-      arc[3 * i + 2] -= anchor.z;
+  const addContour = (points: THREE.Vector3[], anchor: number, unit: boolean) => {
+    if (points.length < 3 || contours.length >= CONTOURS) return;
+    const resampled = resampleSpline(points, CONTOUR_POINTS);
+    for (let i = 0; i < CONTOUR_POINTS; i++) {
+      resampled[3 * i] -= rest[3 * anchor];
+      resampled[3 * i + 1] -= rest[3 * anchor + 1];
+      resampled[3 * i + 2] -= rest[3 * anchor + 2];
     }
-    contours.push({ root: byAngle.find((s) => rootU(s) >= 0.75)?.root ?? strands[0].root, points: arc });
+    contours.push({ vertex: anchor, points: resampled, unit });
+  };
+  const byAngle = guides.slice().sort((a, b) => rootU(rig, a.vertex) - rootU(rig, b.vertex));
+  const arc: THREE.Vector3[] = [];
+  for (const s of byAngle) {
+    const u = rootU(rig, s.vertex);
+    if (u < 0.75 || u > 2 * Math.PI - 0.75) continue;
+    const x = Math.min(s.rootX + s.radialX * 1.2, frontLimit(s.rootY) + 0.2);
+    arc.push(new THREE.Vector3(x, s.rootY + 0.4, s.rootZ + s.radialZ * 1.2));
   }
+  if (arc.length >= 3) addContour(arc, byAngle.find((s) => rootU(rig, s.vertex) >= 0.75)?.vertex ?? guides[0].vertex, false);
   const extremes = [
-    strands.reduce((best, s) => (rest[3 * s.root + 2] > rest[3 * best.root + 2] ? s : best), strands[0]),
-    strands.reduce((best, s) => (rest[3 * s.root + 2] < rest[3 * best.root + 2] ? s : best), strands[0]),
-    strands.reduce((best, s) => (Math.abs(Math.abs(rootU(s)) - Math.PI) < Math.abs(Math.abs(rootU(best)) - Math.PI) ? s : best), strands[0]),
+    guides.reduce((b, s) => (s.rootZ > b.rootZ ? s : b), guides[0]),
+    guides.reduce((b, s) => (s.rootZ < b.rootZ ? s : b), guides[0]),
+    guides.reduce((b, s) => (Math.abs(rootU(rig, s.vertex) - Math.PI) < Math.abs(rootU(rig, b.vertex) - Math.PI) ? s : b), guides[0]),
   ];
-  while (contours.length < CONTOURS) {
-    const s = extremes[(contours.length - 1 + extremes.length) % extremes.length];
-    const points = new Float32Array(s.offsets);
+  const scratch = new Float32Array(3);
+  for (const s of extremes) {
+    if (contours.length >= CONTOURS) break;
+    const pts: THREE.Vector3[] = [];
     for (let i = 0; i < POINTS; i++) {
-      const t = i / (POINTS - 1);
+      const t = i / SEGMENTS;
+      guideOffset(s, t, false, scratch, 0);
       const push = 1.3 + 0.8 * t;
-      points[3 * i] += s.radial.x * push;
-      points[3 * i + 2] += s.radial.z * push;
+      pts.push(new THREE.Vector3(
+        s.rootX + scratch[0] * CONTOUR_NOMINAL_LONG + s.radialX * push,
+        s.rootY + scratch[1] * CONTOUR_NOMINAL_LONG,
+        s.rootZ + scratch[2] * CONTOUR_NOMINAL_LONG + s.radialZ * push
+      ));
     }
-    contours.push({ root: s.root, points });
+    addContour(pts, s.vertex, true);
   }
+  while (contours.length < CONTOURS && guides.length) addContour(
+    [0, 0.5, 1].map((t) => new THREE.Vector3(
+      guides[0].rootX + guides[0].radialX * t,
+      guides[0].rootY - CONTOUR_NOMINAL_LONG * t,
+      guides[0].rootZ + guides[0].radialZ * t)),
+    guides[0].vertex, true
+  );
 
-  function rootU(s: StrandTemplate): number {
-    const o = 3 * s.root;
-    const theta = Math.atan2(rest[o + 2], rest[o] - 3.0);
-    return theta < 0 ? theta + 2 * Math.PI : theta;
-  }
-
-  // Mezcla de largos: la punta cae más en la nuca y menos en la coronilla; las sienes y laterales
-  // quedan en un término medio. Con short el rango se recorta en update() (8..22 cm).
-  for (const s of strands) {
-    const u = rootU(s);
-    const back = Math.abs(u - Math.PI) / Math.PI; // 0 delante, 1 detrás
-    const high = THREE.MathUtils.clamp((rest[3 * s.root + 1] - 80) / 10, 0, 1);
-    s.lengthScale = 0.7 + 0.3 * back - 0.15 * high;
-  }
-
-  // ── Geometría: contornos primero, después todos los mechones (cada uno con tinte al final) ──
-  const contourVerts = contours.length * SEGMENTS * 2;
-  const perStrandVerts = (MAX_THREADS + 1) * SEGMENTS * 2;
-  const totalVerts = contourVerts + strandCount * perStrandVerts;
+  // ── Geometría: contornos, después pares (guía + núcleo), después hijas ──
+  const contourVerts = contours.length * CONTOUR_SEGMENTS * 2;
+  const perGuideVerts = 2 * SEGMENTS * 2;
+  const perDaughterVerts = SEGMENTS * 2;
+  const totalVerts = contourVerts + MAX_GUIDES * perGuideVerts + daughterCount * perDaughterVerts;
   const positions = new Float32Array(totalVerts * 3);
   const alphaBase = new Float32Array(totalVerts);
-  const phaseAttr = new Float32Array(totalVerts);
   const alphaTemplate = new Float32Array(totalVerts);
-  const strandAttr = new Float32Array(totalVerts);
+  const toneAttr = new Float32Array(totalVerts);
+  const gainAttr = new Float32Array(totalVerts);
+  const kindAttr = new Float32Array(totalVerts);
   let w = 0;
+  const pushVertex = (alpha: number, tone: number, gain: number, kind: number) => {
+    alphaBase[w] = alpha; toneAttr[w] = tone; gainAttr[w] = gain; kindAttr[w] = kind; w++;
+  };
   for (let c = 0; c < contours.length; c++) {
-    for (let seg = 0; seg < SEGMENTS; seg++) {
+    for (let seg = 0; seg < CONTOUR_SEGMENTS; seg++) {
       for (let k = 0; k < 2; k++) {
-        const t = (seg + k) / SEGMENTS;
-        alphaBase[w] = 1 - 0.25 * t;
-        phaseAttr[w] = c * 1.7;
-        strandAttr[w] = -1 - c;
-        w++;
+        const t = (seg + k) / CONTOUR_SEGMENTS;
+        pushVertex(1 - 0.35 * t, 0.8, 1, -1 - c);
       }
     }
   }
-  for (let s = 0; s < strandCount; s++) {
-    const strand = strands[s];
-    for (let thread = 0; thread < MAX_THREADS; thread++) {
-      for (let seg = 0; seg < SEGMENTS; seg++) {
-        for (let k = 0; k < 2; k++) {
-          const t = (seg + k) / SEGMENTS;
-          alphaBase[w] = strand.gain * strand.threadGain[thread] * (1 - 0.7 * t);
-          phaseAttr[w] = strand.phase;
-          strandAttr[w] = s;
-          w++;
-        }
-      }
+  for (let g = 0; g < MAX_GUIDES; g++) {
+    for (let seg = 0; seg < SEGMENTS; seg++) {
+      for (let k = 0; k < 2; k++) pushVertex(tipFade((seg + k) / SEGMENTS), 0.5, 1, GUIDE_MARK - g);
     }
     for (let seg = 0; seg < SEGMENTS; seg++) {
-      for (let k = 0; k < 2; k++) {
-        alphaBase[w] = 1;
-        phaseAttr[w] = strand.phase;
-        strandAttr[w] = TINT_MARK - s;
-        w++;
-      }
+      for (let k = 0; k < 2; k++) pushVertex(1, 0.5, 1, TINT_MARK - g);
     }
   }
-
+  for (let d = 0; d < daughterCount; d++) {
+    const s = daughters[d];
+    for (let seg = 0; seg < SEGMENTS; seg++) {
+      for (let k = 0; k < 2; k++) pushVertex(tipFade((seg + k) / SEGMENTS) * s.gain, s.tone, s.gain, d);
+    }
+  }
   alphaTemplate.set(alphaBase);
 
   const geometry = new THREE.BufferGeometry();
@@ -416,14 +603,18 @@ export function createHairLayer(
   const alphaAttr = new THREE.BufferAttribute(alphaBase, 1);
   geometry.setAttribute("position", posAttr);
   geometry.setAttribute("aAlpha", alphaAttr);
-  geometry.setAttribute("aPhase", new THREE.BufferAttribute(phaseAttr, 1));
-  geometry.setAttribute("aStrand", new THREE.BufferAttribute(strandAttr, 1));
+  geometry.setAttribute("aTone", new THREE.BufferAttribute(toneAttr, 1));
+  geometry.setAttribute("aGain", new THREE.BufferAttribute(gainAttr, 1));
+  geometry.setAttribute("aKind", new THREE.BufferAttribute(kindAttr, 1));
   geometry.setDrawRange(0, totalVerts);
 
   const material = new THREE.ShaderMaterial({
     vertexShader: HAIR_VERT,
     fragmentShader: HAIR_FRAG,
     uniforms: {
+      uColorLow: { value: hexToLinear(HAIR_COLOR_LOW) },
+      uColorHigh: { value: hexToLinear(HAIR_COLOR_HIGH) },
+      uDefaultColor: { value: hexToLinear(HAIR_TUNING_DEFAULTS.color) },
       uColor: { value: hexToLinear(HAIR_TUNING_DEFAULTS.color) },
       uContourColor: { value: hexToLinear("#f3e2b8") },
       uStrandAlpha: { value: HAIR_TUNING_DEFAULTS.strandAlpha },
@@ -432,19 +623,20 @@ export function createHairLayer(
       uPx: { value: 1.4 },
     },
     transparent: true,
+    blending: THREE.AdditiveBlending,
     depthWrite: false,
     depthFunc: THREE.LessEqualDepth,
   });
   const lines = new THREE.LineSegments(geometry, material);
-  lines.renderOrder = 2; // encima del vidrio de la ropa, sin escribir profundidad
+  lines.renderOrder = 2;
   lines.frustumCulled = false;
   lines.visible = false;
   parent.add(lines);
 
-  // Cápsulas de choque ancladas a huesos posados: torso/cuello, clavículas y brazos.
+  // Cápsulas ancladas a huesos posados. Torso y cuello empujan hacia detrás, nunca hacia la cámara.
   const capsules: Capsule[] = [
-    { a: rig.bone("hips"), b: rig.bone("upperchest"), radius: 12 },
-    { a: rig.bone("upperchest"), b: rig.bone("neck"), radius: 8 },
+    { a: rig.bone("hips"), b: rig.bone("upperchest"), radius: 12, backBias: true },
+    { a: rig.bone("upperchest"), b: rig.bone("neck"), radius: 8, backBias: true },
     { a: rig.bone("clavicle.R"), b: rig.bone("upperarm.R"), radius: 6 },
     { a: rig.bone("upperarm.R"), b: rig.bone("upperarm2.R"), radius: 5 },
     { a: rig.bone("clavicle.L"), b: rig.bone("upperarm.L"), radius: 6 },
@@ -458,69 +650,70 @@ export function createHairLayer(
   let tuning: HairTuning = { ...HAIR_TUNING_DEFAULTS };
   let variant: "short" | "long" = "long";
   let visible = false;
+  let debugView: HairDebugView = "all";
   let lastDensity = -1;
+  let lastGuideCount = -1;
+  let lastDebug: HairDebugView | "" = "";
+  let activeGuides = 0;
+  let activeDaughters = 0;
+  /** Guías calculadas: las hijas transportan desde cualquiera, aunque solo se dibujen unas pocas. */
+  let computeGuides = 0;
 
-  /** Escribe una polilínea de POINTS puntos como SEGMENTS segmentos de LineSegments. */
-  const writeLine = (points: Float32Array, start: number) => {
-    let o = start * 3;
-    for (let seg = 0; seg < SEGMENTS; seg++) {
-      for (let k = 0; k < 2; k++) {
-        const p = 3 * (seg + k);
-        positions[o] = points[p];
-        positions[o + 1] = points[p + 1];
-        positions[o + 2] = points[p + 2];
-        o += 3;
-      }
-    }
-  };
-
-  /** Bucle caliente: escribe una hebra como 7 segmentos directamente en el buffer del LineSegments. */
-function writeThread(
-  positions: Float32Array,
-  start: number,
-  center: Float32Array,
-  sway: Float32Array,
-  jx: number,
-  jy: number,
-  jz: number
-): void {
-  let o = start * 3;
-  for (let seg = 0; seg < SEGMENTS; seg++) {
-    const fade = 1 - 0.25 * (seg / SEGMENTS);
-    for (let k = 0; k < 2; k++) {
-      const i = 3 * (seg + k);
-      positions[o++] = center[i] + sway[i] + jx * fade;
-      positions[o++] = center[i + 1] + jy * fade;
-      positions[o++] = center[i + 2] + sway[i + 2] + jz * fade;
-    }
-  }
-}
-
-/** Empuja un punto fuera de las cápsulas del cuerpo con 1 cm de separación. */
-  const collide = (p: Float32Array, i: number) => {
+  /** Empuja un punto fuera de las cápsulas con 1 cm de separación. */
+  const collideInto = (x: number, y: number, z: number, out: Float32Array, o: number) => {
+    let px = x, py = y, pz = z;
     const posed = rig.P;
     for (const cap of capsules) {
       const A = posed[cap.a], B = posed[cap.b];
       const min = cap.radius + 1;
-      if (p[i + 1] > Math.max(A.y, B.y) + min || p[i + 1] < Math.min(A.y, B.y) - min) continue;
+      if (py > Math.max(A.y, B.y) + min || py < Math.min(A.y, B.y) - min) continue;
       const abx = B.x - A.x, aby = B.y - A.y, abz = B.z - A.z;
       const len2 = abx * abx + aby * aby + abz * abz || 1;
-      const t = Math.max(0, Math.min(1, ((p[i] - A.x) * abx + (p[i + 1] - A.y) * aby + (p[i + 2] - A.z) * abz) / len2));
-      const dx = p[i] - (A.x + abx * t);
-      const dy = p[i + 1] - (A.y + aby * t);
-      const dz = p[i + 2] - (A.z + abz * t);
+      const t = clamp(((px - A.x) * abx + (py - A.y) * aby + (pz - A.z) * abz) / len2, 0, 1);
+      let dx = px - (A.x + abx * t), dy = py - (A.y + aby * t), dz = pz - (A.z + abz * t);
+      if (cap.backBias && dx > 0) dx = -Math.abs(dx) * 0.35;
       const d = Math.hypot(dx, dy, dz);
       if (d >= min) continue;
-      if (d < 1e-4) {
-        p[i + 2] += min;
-        continue;
-      }
+      if (d < 1e-4) { pz += min; continue; }
       const push = (min - d) / d;
-      p[i] += dx * push;
-      p[i + 1] += dy * push;
-      p[i + 2] += dz * push;
+      px += dx * push; py += dy * push; pz += dz * push;
     }
+    out[o] = px; out[o + 1] = py; out[o + 2] = pz;
   };
+
+  /** Recalcula alphas visibles y drawRange al mover density/guideCount o cambiar el diagnóstico. */
+  const refreshAlpha = () => {
+    const density = clamp(tuning.density, 0, 1);
+    // El diagnóstico no solo oculta trazos: evita calcular lo que no se va a dibujar.
+    activeGuides = debugView === "all" || debugView === "guides"
+      ? Math.min(guideCount, Math.round(THREE.MathUtils.lerp(MIN_GUIDES, tuning.guideCount, density)))
+      : 0;
+    activeGuides = clamp(activeGuides, 0, guideCount);
+    activeDaughters = debugView === "all" || debugView === "daughters"
+      ? Math.min(daughterCount, Math.round(THREE.MathUtils.lerp(MIN_DAUGHTERS, MAX_DAUGHTERS, density)))
+      : 0;
+    computeGuides = debugView === "contour" ? 0 : guideCount;
+    lastDensity = density;
+    lastGuideCount = tuning.guideCount;
+    lastDebug = debugView;
+    let v = 0;
+    const paint = (count: number, on: number) => {
+      for (let i = 0; i < count; i++) alphaBase[v + i] = alphaTemplate[v + i] * on;
+      v += count;
+    };
+    for (let c = 0; c < contours.length; c++) paint(CONTOUR_SEGMENTS * 2, debugView === "all" || debugView === "contour" ? 1 : 0);
+    for (let g = 0; g < MAX_GUIDES; g++) {
+      const active = g < activeGuides && (debugView === "all" || debugView === "guides") ? 1 : 0;
+      paint(SEGMENTS * 2, active);
+      paint(SEGMENTS * 2, g < activeGuides && debugView === "all" ? 1 : 0);
+    }
+    for (let d = 0; d < daughterCount; d++) {
+      paint(SEGMENTS * 2, d < activeDaughters && (debugView === "all" || debugView === "daughters") ? 1 : 0);
+    }
+    alphaAttr.needsUpdate = true;
+    geometry.setDrawRange(0, contourVerts + activeGuides * perGuideVerts + activeDaughters * perDaughterVerts);
+  };
+  refreshAlpha();
 
   const applyTuning = (t: HairTuning) => {
     tuning = t;
@@ -531,34 +724,23 @@ function writeThread(
   };
   applyTuning(tuning);
 
+  const guideDelta = new Float32Array(MAX_GUIDES * POINTS * 3);
+  /** Corrección de colisión acumulada por guía: la heredan las hijas sin repetir cápsulas. */
+  const guideCollision = new Float32Array(MAX_GUIDES * POINTS * 3);
+  const localPoint = new Float32Array(POINTS * 3);
+  const worldPoint = new Float32Array(POINTS * 3);
+  const contourPoint = new Float32Array(CONTOUR_POINTS * 3);
+  const point3 = new Float32Array(3);
+  const qInv = new THREE.Quaternion();
+
   const update = (skinned: Float32Array, dt: number, time: number) => {
     if (!visible) return;
-
-    // La densidad cambia cuántos mechones/hebras se dibujan; el buffer ya está reservado al máximo.
-    const density = THREE.MathUtils.clamp(tuning.density, 0, 1);
-    const activeStrands = Math.min(strandCount, Math.round(THREE.MathUtils.lerp(MIN_STRANDS, MAX_STRANDS, density)));
-    const activeThreads = Math.round(THREE.MathUtils.lerp(MIN_THREADS, MAX_THREADS, density));
-    if (density !== lastDensity) {
-      lastDensity = density;
-      let v = contourVerts;
-      for (let s = 0; s < strandCount; s++) {
-        for (let thread = 0; thread < MAX_THREADS; thread++, v += SEGMENTS * 2) {
-          const on = s < activeStrands && thread < activeThreads ? 1 : 0;
-          for (let j = 0; j < SEGMENTS * 2; j++) alphaBase[v + j] = alphaTemplate[v + j] * on;
-        }
-        // El tinte de un mechón inactivo también se apaga.
-        const tintStart = v;
-        v += SEGMENTS * 2;
-        const on = s < activeStrands ? 1 : 0;
-        for (let j = 0; j < SEGMENTS * 2; j++) alphaBase[tintStart + j] = alphaTemplate[tintStart + j] * on;
-      }
-      alphaAttr.needsUpdate = true;
-      geometry.setDrawRange(0, contourVerts + activeStrands * perStrandVerts);
-    }
+    if (tuning.density !== lastDensity || tuning.guideCount !== lastGuideCount || debugView !== lastDebug) refreshAlpha();
 
     // Velocidad angular de cabeza y torso, leída de los huesos ya posados.
     const qHead = rig.S[headBone] as THREE.Quaternion;
     const qHip = rig.S[hipBone] as THREE.Quaternion;
+    qInv.copy(qHead).invert();
     const safeDt = Math.max(1 / 240, Math.min(0.1, dt));
     const headSpeed = 2 * Math.acos(Math.min(1, Math.abs(prevHead.dot(qHead)))) / safeDt;
     const hipSpeed = 2 * Math.acos(Math.min(1, Math.abs(prevHip.dot(qHip)))) / safeDt;
@@ -569,65 +751,127 @@ function writeThread(
     const baseLength = variant === "short"
       ? THREE.MathUtils.lerp(8, 22, tuning.length)
       : THREE.MathUtils.lerp(26, 66, tuning.length);
-    const sweep = THREE.MathUtils.clamp(tuning.sweep, -1, 1) * 17; // cm de barrido lateral en la punta
+    const sweep = THREE.MathUtils.clamp(tuning.sweep, -1, 1) * 17;
+    const short = variant === "short";
+    const gd = guideDelta, gc = guideCollision, ds = daughters, pos = positions, lp = localPoint;
 
-    const center = new Float32Array(POINTS * 3);
-    const sway = new Float32Array(POINTS * 3);
-    const point = new Float32Array(3);
-
-    const buildCenter = (s: StrandTemplate, lengthScale: number, outward: number, extraSweep: number) => {
-      const root = 3 * s.root;
-      const rx = skinned[root], ry = skinned[root + 1], rz = skinned[root + 2];
-      const len = baseLength * lengthScale;
+    // ── Guías: delta local por punto, con onda y balanceo susceptibles al movimiento ──
+    for (let g = 0; g < computeGuides; g++) {
+      const s = guides[g];
+      const len = baseLength * s.lengthScale;
+      const base = g * POINTS * 3;
       for (let i = 0; i < POINTS; i++) {
         const t = i / SEGMENTS;
-        const o = 3 * i;
-        rotateInto(qHead, s.offsets[o] * len, s.offsets[o + 1] * len, s.offsets[o + 2] * len, point, 0);
-        const push = outward * (0.4 + 0.6 * t);
-        center[o] = rx + point[0] + s.radial.x * push;
-        center[o + 1] = ry + point[1];
-        center[o + 2] = rz + point[2] + s.radial.z * push + sweep * t * t + extraSweep * t;
-        // Balanceo: fase propia por mechón, amplitud creciente hacia la punta.
-        const amp = (0.12 + drive * 0.9) * t * t;
-        const wave = Math.sin(time * 1.6 + s.phase + t * 1.1);
-        sway[o] = -0.35 * amp * wave;
-        sway[o + 1] = 0;
-        sway[o + 2] = amp * wave;
-        collide(center, o);
+        guideOffset(s, t, short, guideDelta, base + 3 * i);
+        gc[base + 3 * i] = 0;
+        gc[base + 3 * i + 1] = 0;
+        gc[base + 3 * i + 2] = 0;
+        const o = base + 3 * i;
+        for (let c = 0; c < 3; c++) gd[o + c] *= len;
+        const wave = s.waveAmp * Math.sin(time * 0.9 + s.phase + 2 * Math.PI * s.waveFreq * t) * t;
+        const sway = (0.1 + drive * 0.7) * t * t * Math.sin(time * 1.4 + s.phase * 0.7);
+        gd[o] += s.tangentX * (wave + sway) - 0.1 * t;
+        gd[o + 2] += s.tangentZ * (wave + sway) + sweep * t * t;
       }
-    };
-
-    // Contornos (no dependen de la densidad).
-    let v = 0;
-    for (const c of contours) {
-      const root = 3 * c.root;
-      const rx = skinned[root], ry = skinned[root + 1], rz = skinned[root + 2];
-      for (let i = 0; i < POINTS; i++) {
-        const o = 3 * i;
-        rotateInto(qHead, c.points[o], c.points[o + 1], c.points[o + 2], point, 0);
-        center[o] = rx + point[0];
-        center[o + 1] = ry + point[1];
-        center[o + 2] = rz + point[2];
-      }
-      writeLine(center, v);
-      v += SEGMENTS * 2;
     }
 
-    // Mechones: un centro por mechón y las hebras como desplazamientos rígidos sobre ese centro.
-    for (let s = 0; s < activeStrands; s++) {
-      const strand = strands[s];
-      buildCenter(strand, strand.lengthScale, 0, 0);
-      for (let thread = 0; thread < MAX_THREADS; thread++) {
-        if (thread < activeThreads) {
-          // El jitter es de 0.4..1.0 cm: se deja en el marco del cuerpo y no se gira con la cabeza.
-          writeThread(positions, v, center, sway,
-            strand.jitter[3 * thread], strand.jitter[3 * thread + 1], strand.jitter[3 * thread + 2]);
-        }
-        // Las hebras inactivas conservan su buffer: su alpha es 0.
+    let v = 0;
+    // ── Contornos ──
+    for (const c of contours) {
+      const o = 3 * c.vertex;
+      const ax = rest[o], ay = rest[o + 1], az = rest[o + 2];
+      const scale = c.unit ? baseLength / CONTOUR_NOMINAL_LONG : 1;
+      for (let i = 0; i < CONTOUR_POINTS; i++) {
+        const p = 3 * i;
+        const lx = ax + c.points[p] * scale;
+        const ly = ay + c.points[p + 1] * scale;
+        const lz = az + c.points[p + 2] * scale;
+        const gx = Math.min(lx, frontLimit(ly));
+        rotateInto(qHead, gx - ax, ly - ay, lz - az, point3, 0);
+        collideInto(skinned[o] + point3[0], skinned[o + 1] + point3[1], skinned[o + 2] + point3[2], contourPoint, p);
+      }
+      writePolyline(positions, contourPoint, CONTOUR_POINTS, v);
+      v += CONTOUR_SEGMENTS * 2;
+    }
+
+    // ── Guías y su núcleo de masa ──
+    // La colisión se resuelve en las guías y su corrección se guarda aparte: las hijas la heredan
+    // sin repetir 6 cápsulas por punto (era el coste dominante). Así `guideDelta` sigue siendo la
+    // forma base de la guía y no acumula correcciones entre frames.
+    for (let g = 0; g < computeGuides; g++) {
+      const s = guides[g];
+      const o = 3 * s.vertex;
+      const base = g * POINTS * 3;
+      for (let i = 0; i < POINTS; i++) {
+        const p = 3 * i;
+        const lx = s.rootX + gd[base + p];
+        const ly = s.rootY + gd[base + p + 1];
+        const lz = s.rootZ + gd[base + p + 2];
+        const gx = Math.min(lx, frontLimit(ly));
+        rotateInto(qHead, gx - rest[o], ly - rest[o + 1], lz - rest[o + 2], point3, 0);
+        const wx = skinned[o] + point3[0], wy = skinned[o + 1] + point3[1], wz = skinned[o + 2] + point3[2];
+        collideInto(wx, wy, wz, worldPoint, p);
+        rotateInto(qInv, worldPoint[p] - wx, worldPoint[p + 1] - wy, worldPoint[p + 2] - wz, point3, 0);
+        gc[base + p] = point3[0];
+        gc[base + p + 1] = point3[1];
+        gc[base + p + 2] = point3[2];
+      }
+      if (g < activeGuides) {
+        writePolyline(positions, worldPoint, POINTS, v);
+        v += SEGMENTS * 2;
+        writePolyline(positions, worldPoint, POINTS, v); // núcleo de masa
         v += SEGMENTS * 2;
       }
-      // Cinta de masa tenue: la polilínea central con uBodyAlpha.
-      writeLine(center, v);
+    }
+    // Las guías calculadas pero no dibujadas siguen alimentando el transporte de las hijas.
+
+    // ── Hijas: transporte desde 3 guías + separación, onda y brillo propios ──
+    const clumpStrength = 0.3 + 0.3 * clamp(tuning.clump, 0, 1);
+    const spread = tuning.spread;
+    for (let d = 0; d < activeDaughters; d++) {
+      const s = ds[d];
+      const o = 3 * s.anchor;
+      const ax = rest[o], ay = rest[o + 1], az = rest[o + 2];
+      const dx0 = s.rootX - ax, dy0 = s.rootY - ay, dz0 = s.rootZ - az;
+      const w0 = s.weight[0] + (1 - s.weight[0]) * clumpStrength;
+      const w1 = s.weight[1] * (1 - clumpStrength);
+      const w2 = s.weight[2] * (1 - clumpStrength);
+      const g0 = s.guide[0] * POINTS * 3, g1 = s.guide[1] * POINTS * 3, g2 = s.guide[2] * POINTS * 3;
+      // Onda por recurrencia: 4 trigonometrics por hija en vez de 1 por punto (era el coste dominante).
+      const step = (2 * Math.PI * s.waveFreq) / SEGMENTS;
+      const sinStep = Math.sin(step), cosStep = Math.cos(step);
+      const phase = time * 0.9 + s.wavePhase;
+      let sinT = Math.sin(phase), cosT = Math.cos(phase);
+      for (let i = 0; i < POINTS; i++) {
+        const t = i / SEGMENTS;
+        const p = 3 * i;
+        const lateral = s.spread * spread * (0.25 + 0.75 * t);
+        const wave = s.waveAmp * sinT * t;
+        const nextSin = sinT * cosStep + cosT * sinStep;
+        cosT = cosT * cosStep - sinT * sinStep;
+        sinT = nextSin;
+        const side = lateral + wave;
+        let lx = dx0;
+        let ly = dy0;
+        let lz = dz0;
+        const ls = s.lengthScale;
+        lx += w0 * (gd[g0 + p] * ls + gc[g0 + p]);
+        ly += w0 * (gd[g0 + p + 1] * ls + gc[g0 + p + 1]);
+        lz += w0 * (gd[g0 + p + 2] * ls + gc[g0 + p + 2]);
+        lx += w1 * (gd[g1 + p] * ls + gc[g1 + p]);
+        ly += w1 * (gd[g1 + p + 1] * ls + gc[g1 + p + 1]);
+        lz += w1 * (gd[g1 + p + 2] * ls + gc[g1 + p + 2]);
+        lx += w2 * (gd[g2 + p] * ls + gc[g2 + p]);
+        ly += w2 * (gd[g2 + p + 1] * ls + gc[g2 + p + 1]);
+        lz += w2 * (gd[g2 + p + 2] * ls + gc[g2 + p + 2]);
+        lx += s.tangentX * side;
+        lz += s.tangentZ * side;
+        const absX = ax + lx, absY = ay + ly, absZ = az + lz;
+        const gx = Math.min(absX, frontLimit(absY));
+        rotateInto(qHead, gx - ax, ly, lz, lp, p);
+        // Sin colisión por hija: el desplazamiento de sus guías ya las saca del torso.
+      }
+      writePolyline(pos, lp, POINTS, v);
       v += SEGMENTS * 2;
     }
     posAttr.needsUpdate = true;
@@ -638,13 +882,24 @@ function writeThread(
   };
 
   return {
-    setVisible(next: boolean) {
-      visible = next;
-      lines.visible = next;
-    },
+    setVisible(next: boolean) { visible = next; lines.visible = next; },
     setSpec,
     setTuning: applyTuning,
+    setDebug(next: HairDebugView) {
+      if (next === debugView) return;
+      debugView = next;
+      refreshAlpha();
+    },
     update,
+    stats() {
+      return {
+        guides: activeGuides,
+        daughters: activeDaughters,
+        placedDaughters: daughterCount,
+        contours: contours.length,
+        vertices: geometry.drawRange.count,
+      };
+    },
     dispose() {
       parent.remove(lines);
       geometry.dispose();

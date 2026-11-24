@@ -5,10 +5,17 @@
  * sliders y `RigScene` lee cada frame para actualizar uniforms y la geometría de líneas. Así el panel
  * no cambia la identidad de `characters` y no provoca el rebuild de la escena. Los mismos valores se
  * guardan en `layers.hair` del JSON; al cargar una escena, `RigScene` siembra este store desde ahí.
+ *
+ * `hairDebugView` NO se persiste: es una ayuda de diagnóstico del editor (todo / guías / hijas /
+ * contorno), no parte de la escena exportable.
  */
 
+/** Extremos del degradado por hebra, en color lineal calculado por `hair.ts`. */
+export const HAIR_COLOR_LOW = "#cdb98a";
+export const HAIR_COLOR_HIGH = "#fff0c8";
+
 export interface HairTuning {
-  /** Densidad relativa: 40 mechones × 8 hebras a 90 × 40 (320..3600 hebras). */
+  /** Densidad relativa: 600..3000 hijas y 30..`guideCount` guías. */
   density: number;
   /** Largo relativo dentro de la variante (corto o largo). */
   length: number;
@@ -18,11 +25,17 @@ export interface HairTuning {
   strandAlpha: number;
   /** Alpha de las líneas de contorno del volumen. */
   contourAlpha: number;
-  /** Alpha del tinte de masa por mechón. */
+  /** Alpha del núcleo tenue que da masa sobre cada guía. */
   bodyAlpha: number;
   /** Ganancia del balanceo inducido por la velocidad angular de cabeza y torso. */
   sway: number;
-  /** Color del pelo en hex. */
+  /** Dispersión lateral mínima entre hijas, en cm (0.6..1.8). */
+  spread: number;
+  /** Cuánto se acerca cada hija a su guía más cercana: 0 = 30 %, 1 = 60 %. */
+  clump: number;
+  /** Guías objetivo con density = 1 (30..70). */
+  guideCount: number;
+  /** Color base del pelo en hex; el degradado se deriva de este valor. */
   color: string;
 }
 
@@ -37,17 +50,23 @@ export const HAIR_TUNING_RANGES: Record<HairNumericKey, { min: number; max: numb
   contourAlpha: { min: 0, max: 1 },
   bodyAlpha: { min: 0, max: 0.3 },
   sway: { min: 0, max: 2 },
+  spread: { min: 0.6, max: 1.8 },
+  clump: { min: 0, max: 1 },
+  guideCount: { min: 30, max: 70 },
 };
 
-/** Punto de partida: pelo crema/dorado, translúcido, con masa muy tenue. */
+/** Punto de partida: translúcido, hebras separadas, casi sin masa. */
 export const HAIR_TUNING_DEFAULTS: HairTuning = {
   density: 0.5,
   length: 0.5,
   sweep: 0,
-  strandAlpha: 0.35,
+  strandAlpha: 0.14,
   contourAlpha: 0.7,
-  bodyAlpha: 0.08,
+  bodyAlpha: 0.03,
   sway: 1,
+  spread: 1.0,
+  clump: 0.5,
+  guideCount: 70,
   color: "#e6cf9a",
 };
 
@@ -101,4 +120,19 @@ export function setHairTuning(id: string, patch: Partial<HairTuning>): HairTunin
 export function resetHairTuning(id: string): HairTuning {
   perCharacter.delete(id);
   return { ...defaults };
+}
+
+// ── Diagnóstico del editor (no persistente) ────────────────────────────────
+export type HairDebugView = "all" | "guides" | "daughters" | "contour";
+export const HAIR_DEBUG_VIEWS: readonly HairDebugView[] = ["all", "guides", "daughters", "contour"];
+
+let debugView: HairDebugView = "all";
+
+export function getHairDebugView(): HairDebugView {
+  return debugView;
+}
+
+export function setHairDebugView(view: HairDebugView): HairDebugView {
+  if (HAIR_DEBUG_VIEWS.includes(view)) debugView = view;
+  return debugView;
 }

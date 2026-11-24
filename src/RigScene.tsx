@@ -30,6 +30,7 @@ import { POSTURE_PRESETS, listeningPose, lerpPose, clonePose } from "./poses.ts"
 import { CLOTH_REGION_GLSL } from "./layers/common.ts";
 import { createOutfitLayer, type OutfitLayerHandle, type OutfitSpec } from "./layers/outfit.ts";
 import {
+  getHairDebugView,
   getHairTuning,
   resetHairTuning,
   setHairTuning,
@@ -347,7 +348,10 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       const hair = ch.layers?.hair;
       const hairPatch: Partial<HairTuning> = {};
       let hasHairTuning = false;
-      for (const key of ["density", "length", "sweep", "strandAlpha", "contourAlpha", "bodyAlpha", "sway", "color"] as const) {
+      for (const key of [
+        "density", "length", "sweep", "strandAlpha", "contourAlpha", "bodyAlpha", "sway",
+        "spread", "clump", "guideCount", "color",
+      ] as const) {
         const value = hair?.[key];
         if (value !== undefined) {
           (hairPatch as Record<string, unknown>)[key] = value;
@@ -554,6 +558,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           // Uniforms en vivo: nunca reconstruye la escena; el pelo solo reescribe su geometría.
           p.outfit.setTuning(getOutfitTuning(p.id));
           p.hair.setTuning(getHairTuning(p.id));
+          p.hair.setDebug(getHairDebugView());
           const isCurrentSpeaker = hasSpeaker && p.id === activeId;
           const isSolo = performers.length === 1;
 
