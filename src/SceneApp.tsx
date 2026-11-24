@@ -29,7 +29,7 @@ export function SceneApp() {
 
   // ── Global Stage Appearance ──
   const [headLook, setHeadLook] = useState<HeadLookName>("vocal");
-  const [bodyStyle, setBodyStyle] = useState<BodyStyle>("head-only");
+  const [bodyStyle, setBodyStyle] = useState<BodyStyle>("vocal");
   const [atmosphere, setAtmosphere] = useState<StageAtmosphere>("void");
   const rigSceneRef = useRef<RigSceneHandle>(null);
 
@@ -303,18 +303,18 @@ export function SceneApp() {
 
         {/* Floating Scene Controls Toolbar */}
         <div className="quimera-stage-bar">
-          {/* Estética aprobada: cabeza anatómica en modo vocal, sin cuerpo que la contornee.
-              Los estilos legacy (anatomic/ethereal/mesh) siguen en el esquema solo para leer JSON
-              antiguo: validateScene() los normaliza a head-only y no se ofrecen en esta barra. */}
+          {/* Estética aprobada: la malla del cuerpo continua la de la cabeza en modo vocal.
+              "head-only" sigue en el esquema para escenas avanzadas; los estilos legacy
+              (anatomic/ethereal/mesh) se normalizan a "vocal" al importar. */}
           <div className="quimera-tool-group">
             <span className="quimera-bar-label">Cuerpo:</span>
             <button
               type="button"
-              className={`quimera-tool-btn${bodyStyle === "head-only" ? " is-active" : ""}`}
-              onClick={() => setBodyStyle("head-only")}
-              title="Cabeza anatómica flotante, sin cuerpo que compita con ella"
+              className={`quimera-tool-btn${bodyStyle === "vocal" ? " is-active" : ""}`}
+              onClick={() => setBodyStyle("vocal")}
+              title="Silueta tenue, línea media y pocas curvas verticales en el azul de la cabeza; cortada en el cuello para dejar la cara limpia"
             >
-              Cabeza sola
+              Vocal
             </button>
           </div>
 
@@ -362,7 +362,7 @@ export function SceneApp() {
 
           {/* Camera reset */}
           <div className="quimera-tool-group">
-            <span className="quimera-camera-hint">🖱️ Arrastrar: rotar · Rueda: zoom</span>
+            <span className="quimera-camera-hint"> Arrastrar: rotar · Rueda: zoom</span>
             <button
               type="button"
               className="quimera-btn-reset-cam"
@@ -418,7 +418,7 @@ export function SceneApp() {
             className={`quimera-tab${mode === "scene" ? " is-active" : ""}`}
             onClick={() => setMode("scene")}
           >
-            🎬 Escena & Diálogo
+            Escena & Diálogo
           </button>
           <button
             role="tab"
@@ -426,7 +426,7 @@ export function SceneApp() {
             className={`quimera-tab${mode === "studio" ? " is-active" : ""}`}
             onClick={() => setMode("studio")}
           >
-            🛠️ Estudio Creativo
+            Estudio Creativo
           </button>
           <button
             role="tab"
@@ -434,7 +434,7 @@ export function SceneApp() {
             className={`quimera-tab${mode === "free" ? " is-active" : ""}`}
             onClick={() => setMode("free")}
           >
-            🎙️ Voz Libre
+            Voz Libre
           </button>
         </div>
 
@@ -479,7 +479,7 @@ export function SceneApp() {
                 className="quimera-btn-secondary quimera-btn-accent"
                 onClick={() => setMode("studio")}
               >
-                Editar en Estudio ✏️
+                Editar en Estudio
               </button>
             </div>
 
@@ -491,7 +491,7 @@ export function SceneApp() {
                 if ("kind" in ev) {
                   return (
                     <li key={i} className={`quimera-beat${isActive ? " is-active" : ""}`}>
-                      <span className="quimera-beat-icon">⏱</span>
+                      <span className="quimera-beat-icon"></span>
                       Pausa: {ev.label ?? "silencio"} ({ev.durationS} s)
                     </li>
                   );
@@ -549,7 +549,7 @@ export function SceneApp() {
                 className="quimera-btn-secondary quimera-btn-accent"
                 onClick={() => setMode("scene")}
               >
-                Ver reproducción ▶
+                Ver reproducción
               </button>
             </div>
 
@@ -558,7 +558,7 @@ export function SceneApp() {
               {/* Left Column: Character Roster */}
               <div className="quimera-studio-panel">
                 <div className="quimera-panel-header">
-                  <h3>🎭 Personajes ({scene.characters.length})</h3>
+                  <h3>Personajes ({scene.characters.length})</h3>
                   <button type="button" className="quimera-btn-small" onClick={addCharacter}>
                     + Añadir personaje
                   </button>
@@ -659,7 +659,7 @@ export function SceneApp() {
               {/* Right Column: Dialogue & Feelings Editor */}
               <div className="quimera-studio-panel">
                 <div className="quimera-panel-header">
-                  <h3>💬 Diálogo & Sentimientos ({scene.events.length})</h3>
+                  <h3>Diálogo & Sentimientos ({scene.events.length})</h3>
                   <div className="quimera-panel-actions">
                     <button type="button" className="quimera-btn-small" onClick={addLine}>
                       + Frase
@@ -720,7 +720,7 @@ export function SceneApp() {
                           </div>
                         ) : (
                           <div className="quimera-beat-editor">
-                            <span className="quimera-beat-icon">⏱ Pausa:</span>
+                            <span className="quimera-beat-icon">Pausa:</span>
                             <input
                               type="text"
                               className="quimera-beat-input"

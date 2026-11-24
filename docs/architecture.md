@@ -34,14 +34,25 @@ completa de CHIMERA.
 El prototipo incluye:
 
 - **Estética aprobada por defecto** (`src/SceneApp.tsx`, `src/RigScene.tsx`): cabeza anatómica en
-  modo `vocal` con cuerpo `head-only` (cabeza sola). Es la única combinación que se ofrece en la
-  barra principal: conserva la física anatómica, la respiración, los giros mutuos y el lip-sync de
-  CHIMERA sin anillos ni mallas que compitan con la cabeza. `vocal` es el look que articula los
-  labios desde los articuladores del motor.
-- **Estilos de cuerpo legacy**: `anatomic`, `ethereal` y `mesh` siguen marcados como `@deprecated`
-  en `BodyStyle` para poder leer escenas guardadas antes de este cambio. `validateScene()`
-  (`src/scene.ts`) los normaliza a `head-only` al importar y la interfaz no los muestra, así que un
-  JSON antiguo no puede reactivarlos.
+  modo `vocal` con cuerpo base `vocal`. La cabeza es un *corte* (contorno nítido, pocos elementos
+  brillantes, mucho negro); el cuerpo habla ese mismo idioma con tres cosas: una silueta fina sin
+  relleno, una línea media del torso (eje z lateral del rig en reposo, acotada por la profundidad x)
+  con el acento rosa/rojo en el pecho, y pocas curvas verticales de contorno (perpendiculares a x y z)
+  ancladas a coordenadas de reposo para que se lea al orbitar sin deslizarse con los gestos.
+  Sin malla, sin anillos horizontales y sin relleno. Las líneas se miden en píxeles de pantalla, así que conservan
+  el grosor fino con cualquier zoom. La piel de la cabeza vive en esa misma malla por encima del
+  borde del cuello (y ≈ 67 cm), así que el shader se corta ahí y la cara queda limpia. `vocal` es
+  además el look que articula los labios desde los articuladores del motor.
+- **Cuerpo base + capas** (`Character.layers` en `src/scene.ts`): el cuerpo base es deliberadamente
+  mínimo para que cualquier capa encima lo lea bien. Pelo y ropa serán campos de líneas finas
+  (miles de trazos casi paralelos con densidad variable, translúcidos, con brillo; la referencia
+  es el pelo del video de estilo) en un solo buffer `LineSegments`, activables por personaje. El
+  esquema ya los valida (`hair`, `outfit`; `enabled`, `color`, `density`, `variant`) pero el
+  renderer aún no los dibuja.
+- **Estilos de cuerpo apartados**: `head-only` (solo la cabeza, sin cuerpo) queda en el esquema para
+  escenas avanzadas y no se ofrece en la barra principal. `anatomic`, `ethereal` y `mesh` están
+  marcados como `@deprecated`: `validateScene()` (`src/scene.ts`) los normaliza a `vocal` al importar,
+  así que un JSON antiguo no puede reactivar los anillos ni la malla completa que se rechazaron.
 - **Estudio Creativo integrado** (`src/SceneApp.tsx`):
   - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario y color de acento.
   - *Editor de guiones y sentimientos*: agregar, editar, reordenar y eliminar líneas y pausas; asignación de actitudes por réplica (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).

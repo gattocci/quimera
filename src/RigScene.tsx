@@ -4,12 +4,14 @@
  * Capabilities:
  *  - 1 or 2 performers with individual body rigs, voices, and 3D heads.
  *  - Body style modes:
- *      * "anatomic": Horizontal contour slice rings matching the exact aesthetic of the CHIMERA head.
- *      * "head-only": Pure CHIMERA standalone head floating in space, zero body clutter.
- *      * "ethereal": Soft, translucent contour silhouette that anchors the head gently.
- *      * "mesh": Complete technical wireframe rig.
- *  - Restores the iconic CHIMERA anatomic wireframe aesthetic ("classic" look: cyan contour loops,
- *    glowing orange jaw, vivid airway, tongue, and larynx).
+ *      * "vocal" (default): a quiet "ghost" body in CHIMERA's blue — a faint silhouette outline plus
+ *        a few sparse vertical contour curves (a bright warm midline, like the cut through the head)
+ *        so it reads when the camera orbits. No grid, no fill, no rings; cut at the neck rim so the
+ *        face stays clean. It is the base layer: hair/outfit line-fields are meant to sit on top.
+ *      * "head-only": pure CHIMERA standalone head, no body at all (advanced scenes).
+ *   Legacy body styles are normalized to "vocal" by validateScene() and render as "vocal" here.
+ *  - The approved presentation is head look "vocal": the CHIMERA anatomical head with its lips
+ *    driven by the voice's articulators, not a generic viseme animation.
  *  - Interactive 3D camera (OrbitControls): rotate, zoom, and pan around the performers.
  *  - Emotion & intention transitions (curious, emphatic, thoughtful, agreement, etc.).
  *  - Interlocutor gaze tracking: listeners turn toward speakers.
@@ -49,82 +51,161 @@ interface PerformerInstance {
   model: any;
   head: any;
   view: any;
-  contourMat: THREE.ShaderMaterial;
-  origFrontMat: THREE.ShaderMaterial;
-  origBackMat: THREE.ShaderMaterial;
+  vocalMat: THREE.ShaderMaterial;
+  vocalBackMat: THREE.ShaderMaterial;
   skinned: Float32Array;
   currentPose: Pose;
   targetPose: Pose;
   baseTurn: number;
 }
 
-// ────────────────────────────────────────────── Contour Ring Shaders ─────────
+// ──────────────────────────────────────── Vocal body shader ───────────────────
 
-const CONTOUR_VERT = /* glsl */ `
-varying vec3 vPos;
+/**
+ * Cuerpo base "fantasma" con el lenguaje de la cabeza en `vocal`.
+ *
+ * La cabeza es un *corte*: un contorno nítido por la línea media, pocos elementos brillantes y
+ * mucho negro alrededor. El cuerpo habla el mismo idioma con tres cosas y nada más:
+ *   1. silueta: contorno fino del borde (fresnel), sin relleno;
+ *   2. línea media del torso: la más clara, con el acento rosa/rojo solo en el pecho;
+ *   3. pocas curvas verticales de contorno (cortes perpendiculares a x y a z) que dan volumen y se
+ *      leen al orbitar. Son verticales a propósito: los anillos horizontales ya se rechazaron.
+ *
+ * Los cortes se miden en coordenadas de reposo del rig (atributo `aRest`), no en la malla skinneada:
+ * `position` ya está posada, y en ella el plano elegido se desplaza con `body.turn` y los gestos.
+ * El eje x del rig es delantero-posterior y el z es lateral: la línea media (el corte por el
+ * entrecejo de la cabeza) es z = 0, no x = 0. Con x = 0 el rojo caía en los flancos del torso,
+ * donde brazos y antebrazos también tienen x ≈ 0. La línea media y su acento usan z = 0 y se acotan
+ * a la profundidad del torso (|x| < uTorsoDepth), lejos de manos y antebrazos adelantados.
+ *
+ * Las líneas se miden en píxeles de pantalla (fwidth), así que mantienen el mismo grosor fino con
+ * cualquier zoom y no forman manchas donde la superficie es tangente al plano de corte.
+ *
+ * La piel facial vive en esta misma malla por encima del cuello (y ≈ 67 cm): el dibujo se corta
+ * ahí y la cara queda limpia. Es la capa base: pelo y ropa irán encima como campos de líneas.
+ */
+const VOCAL_VERT = /* glsl */ `
+attribute vec3 aRest;
 varying vec3 vN;
 varying vec3 vV;
+varying vec3 vRest;
 void main() {
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  vPos = position;
   vN = normalMatrix * normal;
   vV = -mv.xyz;
+  vRest = aRest;
   gl_Position = projectionMatrix * mv;
 }
 `;
 
-const CONTOUR_FRAG = /* glsl */ `
+const VOCAL_FRAG = /* glsl */ `
 uniform vec3 uLine;
 uniform vec3 uEdge;
-uniform vec3 uFill;
+uniform vec3 uWarm;
 uniform float uAlpha;
-uniform float uRingStep;
-uniform float uLineWidth;
-varying vec3 vPos;
+uniform float uFadeBottom;
+uniform float uFadeTop;
+uniform float uHeadCutBottom;
+uniform float uHeadCutTop;
+uniform float uBack;
+uniform float uStepX;
+uniform float uStepZ;
+uniform float uPx;
+uniform float uTorsoDepth;
 varying vec3 vN;
 varying vec3 vV;
+varying vec3 vRest;
+
+// Línea de grosor constante en píxeles sobre el corte c = k·step.
+float slice(float c, float step) {
+  float d = abs(fract(c / step + 0.5) - 0.5) * step;
+  float aa = max(fwidth(c), 1e-5);
+  float t = d / aa;
+  return 1.0 - smoothstep(uPx * 0.5, uPx * 0.5 + 1.6, t);
+}
 
 void main() {
-  vec3 n = normalize(vN);
-  vec3 v = normalize(vV);
+  vec3 n = normalize(vN), v = normalize(vV);
   float facing = abs(dot(n, v));
-  float rim = pow(1.0 - facing, 2.4);
 
-  // Horizontal contour ring slice matching CHIMERA head's rings
-  float y = vPos.y;
-  float ringDist = abs(fract(y / uRingStep + 0.5) - 0.5) * uRingStep;
-  float dy = max(fwidth(y), 0.001);
-  float ring = 1.0 - smoothstep(uLineWidth, uLineWidth + dy * 1.6, ringDist);
+  // 1) silueta: borde fino y nítido + un halo muy suave
+  float outline = 1.0 - smoothstep(0.07, 0.24, facing);
+  float halo = pow(1.0 - facing, 2.6);
 
-  // Soft fade below the waist/hips to keep an elegant anatomical bust
-  float heightFade = smoothstep(68.0, 96.0, y);
+  // 2) línea media del torso: plano z = 0 (sagital), anclado al reposo del rig.
+  float aaMid = max(fwidth(vRest.z), 1e-5);
+  float mid = (1.0 - smoothstep(uPx * 0.5, uPx * 0.5 + 1.6, abs(vRest.z) / aaMid))
+            * (1.0 - smoothstep(uTorsoDepth - 2.0, uTorsoDepth, abs(vRest.x)));
 
-  // Combine line, rim edge, and subtle fill
-  vec3 col = uFill * 0.2 + uEdge * 1.1 * rim + uLine * ring * (0.6 + 0.4 * facing) * 1.5;
+  // 3) pocas curvas verticales: cortes en x y en z, sin repetir la línea media (z = 0)
+  float notMid = smoothstep(uStepZ * 0.25, uStepZ * 0.5, abs(vRest.z));
+  float cuts = max(slice(vRest.x, uStepX), slice(vRest.z, uStepZ) * notMid);
+
+  // acento rosa/rojo solo en el pecho, guiño a los órganos internos de la cabeza
+  float chest = smoothstep(18.0, 38.0, vRest.y) * (1.0 - smoothstep(48.0, 64.0, vRest.y));
+  vec3 midColor = mix(uLine, uWarm, chest);
+
+  float wMid = mid * (0.7 + 0.3 * facing);
+  float wCut = cuts * 0.4 * (0.5 + 0.5 * facing);
+  float wOut = outline * 0.9 + halo * 0.2;
+
+  vec3 col = uEdge * 1.2 * halo + uLine * (wCut + outline * 0.9) * 1.3 + midColor * wMid * 2.0;
   col = max(col, 0.0);
   col = mix(col * 12.92, 1.055 * pow(col, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, col));
 
-  float alpha = uAlpha * max(ring * 1.15, rim * 0.65) * heightFade;
-  if (alpha < 0.015) discard;
-
+  float fade = smoothstep(uFadeBottom, uFadeTop, vRest.y);
+  float headCut = 1.0 - smoothstep(uHeadCutBottom, uHeadCutTop, vRest.y);
+  float a = max(max(wMid, wCut), wOut);
+  float alpha = uAlpha * fade * headCut * a * (uBack > 0.5 ? 0.35 : 1.0);
+  if (alpha < 0.008) discard;
   gl_FragColor = vec4(col, alpha);
 }
 `;
 
-function createContourMaterial(opacity = 0.85, ringStep = 1.6) {
+/**
+ * `RigView` rellena `position` con los vértices skinneados de cada frame. Copiamos las posiciones
+ * de reposo del rig a un atributo estático, con el mismo orden de esquinas que usa el view:
+ * los seis vértices de cada quad siguen [0,1,2,0,2,3] sobre `rig.quads`.
+ */
+function addRestAttribute(rig: any, view: any): void {
+  const geometry = (view.group.children[1] as THREE.Mesh).geometry as THREE.BufferGeometry;
+  const cornerCount = geometry.getAttribute("position").count;
+  const rest = new Float32Array(3 * cornerCount);
+  const order = [0, 1, 2, 0, 2, 3];
+  for (let f = 0; f < rig.nq; f++) {
+    for (let j = 0; j < 6; j++) {
+      const vertex = rig.quads[4 * f + order[j]];
+      const to = 3 * (6 * f + j), from = 3 * vertex;
+      rest[to] = rig.rest[from];
+      rest[to + 1] = rig.rest[from + 1];
+      rest[to + 2] = rig.rest[from + 2];
+    }
+  }
+  geometry.setAttribute("aRest", new THREE.BufferAttribute(rest, 3));
+}
+
+function createVocalBodyMaterial(back = false) {
+  // CHIMERA_LOOK de src/rig/view.ts: los mismos valores de línea y borde que ve la cabeza.
   return new THREE.ShaderMaterial({
-    vertexShader: CONTOUR_VERT,
-    fragmentShader: CONTOUR_FRAG,
+    vertexShader: VOCAL_VERT,
+    fragmentShader: VOCAL_FRAG,
     uniforms: {
-      uLine: { value: new THREE.Vector3(0.06, 0.38, 0.72) }, // CHIMERA cyan
-      uEdge: { value: new THREE.Vector3(0.02, 0.18, 0.38) },
-      uFill: { value: new THREE.Vector3(0.002, 0.006, 0.012) },
-      uAlpha: { value: opacity },
-      uRingStep: { value: ringStep },
-      uLineWidth: { value: 0.045 },
+      uLine: { value: new THREE.Vector3(0.06, 0.36, 0.68) },
+      uEdge: { value: new THREE.Vector3(0.03, 0.2, 0.45) },
+      uWarm: { value: new THREE.Vector3(0.9, 0.22, 0.34) },
+      uAlpha: { value: 0.7 },
+      uFadeBottom: { value: -90 },
+      uFadeTop: { value: -45 }, // los pies se desvanecen suavemente
+      uHeadCutBottom: { value: 64 },
+      uHeadCutTop: { value: 70 },
+      uBack: { value: back ? 1 : 0 },
+      uStepX: { value: 18 }, // cm entre cortes perpendiculares a x (delantero-posterior)
+      uStepZ: { value: 26 }, // cm entre cortes perpendiculares a z (laterales)
+      uPx: { value: 1.4 }, // grosor de línea en píxeles
+      uTorsoDepth: { value: 13 }, // cm: semiprofundidad del torso; fuera, la línea media se apaga
     },
     transparent: true,
-    side: THREE.DoubleSide,
+    side: back ? THREE.BackSide : THREE.FrontSide,
     depthWrite: false,
   });
 }
@@ -137,8 +218,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
     activeCharacterId,
     activePosture = "attentive",
     speaking,
-    headLook = "classic",
-    bodyStyle = "anatomic",
+    headLook = "vocal",
+    bodyStyle = "vocal",
     className,
   },
   ref
@@ -217,21 +298,42 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       const chars = charactersRef.current;
       const isDual = chars.length > 1;
 
-      // Camera initial framing: center right at the performers' faces
-      const defaultTarget = isDual ? new THREE.Vector3(0, 142, 0) : new THREE.Vector3(0, 145, 0);
-      const defaultPosition = isDual
-        ? new THREE.Vector3(0, 146, 215)
-        : new THREE.Vector3(12, 148, 130);
+      const defaultTarget = new THREE.Vector3();
+      const defaultPosition = new THREE.Vector3();
+
+      // Encuadre desde los bounds reales de cuerpo + cabeza. La cabeza llega a y ≈ 92, no a 142;
+      // un target fijo alto deja a los personajes en la franja inferior del canvas.
+      // El tramo final de las piernas se desvanece en el shader: no debe achicar la figura.
+      const updateCameraFrame = () => {
+        if (!performers.length) return;
+        const box = new THREE.Box3();
+        for (const p of performers) box.expandByObject(p.group);
+        box.min.y = Math.max(box.min.y, -10);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const halfFov = THREE.MathUtils.degToRad(camera.fov) * 0.5;
+        const margin = 1.22;
+        const distance = Math.max(
+          (size.y * margin) / (2 * Math.tan(halfFov)),
+          (size.x * margin) / (2 * Math.tan(halfFov) * camera.aspect)
+        );
+        // El centro X es la media de las posiciones de escenario: simétrico aunque una cabeza sea
+        // más ancha que la otra. La cámara queda en ese mismo X, sin desplazamiento lateral: un
+        // pequeño offset acercaba al personaje derecho y lo hacía más grande y más brillante.
+        const stageX = performers.reduce((sum, p) => sum + p.group.position.x, 0) / performers.length;
+        defaultTarget.set(stageX, center.y, center.z);
+        defaultPosition.set(stageX, center.y + distance * 0.015, center.z + distance);
+      };
 
       const applyCameraReset = () => {
+        updateCameraFrame();
         camera.position.copy(defaultPosition);
         controls.target.copy(defaultTarget);
         controls.update();
       };
       resetCameraRef.current = applyCameraReset;
-      applyCameraReset();
 
-      const lookConfig = HEAD_LOOKS[headLookRef.current] ?? HEAD_LOOKS.classic;
+      const lookConfig = HEAD_LOOKS[headLookRef.current] ?? HEAD_LOOKS.vocal;
 
       for (let i = 0; i < chars.length; i++) {
         if (disposed) return;
@@ -243,12 +345,12 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
         const head = wearHead(rig, model, { look: lookConfig });
         const view = new RigView(rig);
 
-        // Save original materials so we can switch back to "mesh" cleanly
+        // Static rest coordinates for the vocal shader's anchored cuts.
+        addRestAttribute(rig, view);
         const frontMesh = view.group.children[1] as THREE.Mesh;
         const backMesh = view.group.children[0] as THREE.Mesh;
-        const origFrontMat = frontMesh.material as THREE.ShaderMaterial;
-        const origBackMat = backMesh.material as THREE.ShaderMaterial;
-        const contourMat = createContourMaterial(0.85, 1.6);
+        const vocalMat = createVocalBodyMaterial();
+        const vocalBackMat = createVocalBodyMaterial(true);
 
         // Position on stage
         const defaultX = isDual ? (i === 0 ? -48 : 48) : 0;
@@ -273,9 +375,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           model,
           head,
           view,
-          contourMat,
-          origFrontMat,
-          origBackMat,
+          vocalMat,
+          vocalBackMat,
           skinned,
           currentPose: clonePose(initialPose),
           targetPose: clonePose(initialPose),
@@ -289,6 +390,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
 
       sizeRenderer();
 
+      let framed = false;
       let breathT = 0;
       let last = performance.now();
       let lastAppliedLook = headLookRef.current;
@@ -303,7 +405,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
         const currentLook = headLookRef.current;
         if (currentLook !== lastAppliedLook) {
           lastAppliedLook = currentLook;
-          const targetLook = HEAD_LOOKS[currentLook] ?? HEAD_LOOKS.classic;
+          const targetLook = HEAD_LOOKS[currentLook] ?? HEAD_LOOKS.vocal;
           for (const p of performers) {
             p.head.setLook(targetLook);
             p.view.toneChanged();
@@ -378,6 +480,12 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           p.view.update();
         }
 
+        // Los bounds ya están actualizados por el primer frame (el view rellena su geometría aquí).
+        if (!framed) {
+          framed = true;
+          applyCameraReset();
+        }
+
         renderer.render(scene, camera);
       });
     }
@@ -390,32 +498,17 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       if (style === "head-only") {
         view.group.visible = false;
         view.showBones = false;
-      } else if (style === "anatomic") {
-        // Horizontal contour slice rings matching CHIMERA's head rings
-        view.group.visible = true;
-        p.contourMat.uniforms.uAlpha.value = 0.85;
-        p.contourMat.uniforms.uRingStep.value = 1.6;
-        p.contourMat.uniforms.uLineWidth.value = 0.045;
-        frontMesh.material = p.contourMat;
-        backMesh.visible = false;
-        view.showBones = true; // delicate spine/shoulder line
-      } else if (style === "ethereal") {
-        // Soft translucent contour silhouette
-        view.group.visible = true;
-        p.contourMat.uniforms.uAlpha.value = 0.3;
-        p.contourMat.uniforms.uRingStep.value = 2.0;
-        p.contourMat.uniforms.uLineWidth.value = 0.035;
-        frontMesh.material = p.contourMat;
-        backMesh.visible = false;
-        view.showBones = false;
-      } else {
-        // "mesh": restore standard MakeHuman wireframe quad shader
-        view.group.visible = true;
-        frontMesh.material = p.origFrontMat;
-        backMesh.material = p.origBackMat;
-        backMesh.visible = true;
-        view.showBones = false;
+        return;
       }
+
+      // "vocal" y cualquier estilo legacy (normalizado a "vocal" al importar).
+      // Cuerpo base fantasma: silueta + línea media + pocas curvas verticales (ver VOCAL_FRAG).
+      // Se corta en el cuello para dejar la cara limpia. Caras traseras muy tenues dan capas.
+      view.group.visible = true;
+      frontMesh.material = p.vocalMat;
+      backMesh.material = p.vocalBackMat;
+      backMesh.visible = true;
+      view.showBones = false;
     }
 
     initScene().catch((err) => {
@@ -449,7 +542,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       for (const p of performers) {
         p.head.dispose();
         p.view.dispose();
-        p.contourMat.dispose();
+        p.vocalMat.dispose();
+        p.vocalBackMat.dispose();
         p.model.dispose?.();
         scene.remove(p.group);
       }

@@ -151,14 +151,14 @@ export const POSTURE_PRESETS: Record<PostureHint, Pose> = {
  * Human-friendly labels and icons for each posture/feeling.
  */
 export const POSTURE_LABELS: Record<PostureHint, { label: string; icon: string }> = {
-  neutral: { label: "Reposo neutro", icon: "🧍" },
-  attentive: { label: "Atento / Presente", icon: "👀" },
-  relaxed: { label: "Relajado", icon: "😌" },
-  gesturing: { label: "Gesticulando / Abierto", icon: "👋" },
-  curious: { label: "Curioso / Pregunta", icon: "❓" },
-  emphatic: { label: "Enfático / Seguro", icon: "⚡" },
-  thoughtful: { label: "Pensativo / Reflexivo", icon: "🤔" },
-  agreement: { label: "Acuerdo / Asentimiento", icon: "🤝" },
+  neutral: { label: "Reposo neutro", icon: "" },
+  attentive: { label: "Atento / Presente", icon: "" },
+  relaxed: { label: "Relajado", icon: "" },
+  gesturing: { label: "Gesticulando / Abierto", icon: "" },
+  curious: { label: "Curioso / Pregunta", icon: "" },
+  emphatic: { label: "Enfático / Seguro", icon: "" },
+  thoughtful: { label: "Pensativo / Reflexivo", icon: "" },
+  agreement: { label: "Acuerdo / Asentimiento", icon: "" },
 };
 
 /**
