@@ -44,31 +44,41 @@ El prototipo incluye:
   borde del cuello (y ≈ 67 cm), así que el shader se corta ahí y la cara queda limpia. `vocal` es
   además el look que articula los labios desde los articuladores del motor.
 - **Cuerpo base + ropa** (`Character.layers` en `src/scene.ts`): todo es LUZ. El cuerpo base es un
-  holograma de línea fina; la ropa (`outfit`, `src/layers/outfit.ts`) es vidrio emisivo con borde
-  luminoso, no plástico. Se separa OCULTAR de DIBUJAR: un prepass de profundidad (`colorWrite: false`,
-  `depthWrite: true`, `polygonOffset` 1/1, `renderOrder` -7) tapa el cuerpo detrás de la tela; el
-  pase visible de vidrio es transparente, sin `depthWrite`, `depthFunc: LessEqual`, solo caras
-  frontales (`renderOrder` 1). El acabado mate opaco sigue disponible con
-  `layers.outfit.material: "solid"` (`renderOrder` -5, difusa fija, ambiente 0,35, fresnel y halo
-  azul del 25 %). Conversión a sRGB manual (`layerEncode`) en todos los casos. Remera `#aeb9c3`,
-  pantalón `#66737f`, bordes `#d0d8df` con `uEdgeAlpha` = 0,85; relleno 0,22 en el centro y ≈0,50
-  en la silueta, halo azul del 30 % del azul de línea del cuerpo. `uSolid` por defecto 0; el DEV
-  `?clothSolid=1` y `material: "solid"` encienden el mate. Cintura sin anillo; el puño es un anillo
-  cerrado en `|z| = 30` alrededor del bíceps. La cobertura se amplía solo en la capa para cerrar
-  hombro, pantorrilla, entrepierna, axila y cadera, sin tocar `CLOTH_REGION_GLSL` ni
-  `outfitCoverage()`. El recorte sigue anclado a `aRest` (x delantero, y vertical, z lateral), así
-  que la ropa sigue `body.turn` y los gestos sin deslizarse; un guard en el cuello deja la cara y el
-  lip-sync intactos. `detail` (0..1) controla curvas, costuras y pliegues; `seed` fija su fase.
-  Solo en DEV, `clothSolid`, `clothFill`, `clothAlpha`, `clothEdge`, `clothOffset`, `shirtColor` y
-  `pantsColor` (hex de seis dígitos, con o sin `#`, con fallback) sobrescriben esos valores para
-  ajustar sin recompilar. El pelo (`src/layers/hair.ts`) comparte el lenguaje de luz; hoy no dibuja
-  nada. Los JSON sin `layers` siguen funcionando como antes.
+  holograma de línea fina; la ropa (`outfit`, `src/layers/outfit.ts`) es vidrio tenue con borde
+  luminoso, no plástico. Un relleno translúcido sobre negro se leía como gris plano, así que el
+  vidrio gana profundidad con un revés: `BackSide` transparente, sin `depthWrite`, `renderOrder` -8,
+  solo silueta, bordes, curvas y costuras (`uBackAlpha` = 0,25, con un susurro de relleno 0,05).
+  Después vienen el prepass (`colorWrite: false`, `depthWrite: true`, `polygonOffset` 1/1,
+  `renderOrder` -7), que oculta el cuerpo, y el vidrio visible (FrontSide, sin `depthWrite`,
+  `depthFunc: LessEqual`, `renderOrder` 1). El prepass es `transparent: true` a propósito: Three.js
+  dibuja primero la lista opaca y después la transparente, y `renderOrder` solo ordena dentro de
+  cada lista, así que de otro modo el revés -8 se dibujaría después del prepass -7 y quedaría
+  oculto por su profundidad. El mate opaco sigue disponible con
+  `layers.outfit.material: "solid"` (`renderOrder` -5). Conversión a sRGB manual (`layerEncode`) en
+  todos los casos. Remera `#aeb9c3`, pantalón `#66737f`, bordes `#d0d8df` con `uEdgeAlpha` = 0,85,
+  halo azul del 30 % del azul de línea del cuerpo. Ajustes tenues: `uFill` 0,10, `uEdgeGain` 1,6,
+  `uAlpha` 0,35, `uBackAlpha` 0,25, `uOffset` 1,1 cm. `uSolid` por defecto 0. Entre y = 14 y 34 cm
+  remera y pantalón se solapan (228 vértices del rig con ambas máscaras en 1,00): los pases visibles
+  del pantalón se descartan donde la remera cubre, para no sumar alpha; su prepass sigue activo.
+  Cintura sin anillo; el puño es un anillo cerrado en `|z| = 30` alrededor del bíceps. La cobertura
+  se amplía solo en la capa para cerrar hombro, pantorrilla, entrepierna, axila y cadera, sin tocar
+  `CLOTH_REGION_GLSL` ni los umbrales. El recorte sigue anclado a `aRest` (x delantero, y vertical,
+  z lateral); un guard en el cuello deja la cara y el lip-sync intactos. `detail` (0..1) controla
+  curvas, costuras y pliegues; `seed` fija su fase. Los cinco ajustes se editan en el panel plegable
+  del editor de personajes: `src/layers/outfitTuning.ts` es un store sin React, `RigScene` lee sus
+  valores cada frame y escribe uniforms, por lo que no se rebuild la escena; `SceneApp` también los
+  persiste en `layers.outfit` (`fill`, `edgeGain`, `lineAlpha`, `backAlpha`, `offset`) y
+  `validateScene()` los valida con rangos. En DEV, los parámetros de URL `clothSolid`, `clothFill`,
+  `clothEdgeGain`, `clothAlpha`, `clothBackAlpha`, `clothEdge`, `clothOffset`, `shirtColor` y
+  `pantsColor` siembran esos defaults (hex de seis dígitos, con o sin `#`, con fallback). El pelo
+  (`src/layers/hair.ts`) comparte el lenguaje de luz; hoy no dibuja nada. Los JSON sin `layers`
+  siguen funcionando como antes.
 - **Estilos de cuerpo apartados**: `head-only` (solo la cabeza, sin cuerpo) queda en el esquema para
   escenas avanzadas y no se ofrece en la barra principal. `anatomic`, `ethereal` y `mesh` están
   marcados como `@deprecated`: `validateScene()` (`src/scene.ts`) los normaliza a `vocal` al importar,
   así que un JSON antiguo no puede reactivar los anillos ni la malla completa que se rechazaron.
 - **Estudio Creativo integrado** (`src/SceneApp.tsx`):
-  - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario, color de acento y ropa (`ninguna` / `remera + pantalón`) con su slider de detalle.
+  - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario, color de acento y ropa (`ninguna` / `remera + pantalón`) con su slider de detalle y el panel plegable «Vidrio · ajustes» (relleno, borde, líneas, revés, offset y botón «Restablecer»).
   - *Editor de guiones y sentimientos*: agregar, editar, reordenar y eliminar líneas y pausas; asignación de actitudes por réplica (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).
 - **Atmósferas escénicas**: modos *Vacío* (negro profundo de alto contraste), *Rejilla* (cibernético) y *Foco* (iluminación cenital).
 - **Cámara interactiva** (`OrbitControls`): rotación 360°, zoom hacia los órganos vocales y recentrado con un clic.
@@ -78,17 +88,21 @@ El prototipo incluye:
 ### Reglas de las capas
 
 - Cabeza, cuerpo, ropa y pelo son LUZ: líneas finas y translúcidas de grosor constante en píxeles
-  (`fwidth`). La ropa es vidrio emisivo con un prepass que oculta el cuerpo; el mate opaco es una
-  opción por capa, no el default. Sin anillos repetidos: las horizontales solo son bordes de prenda
-  (cuello, puños, dobladillos, tobillo), curvas con la sección y nunca rectas.
+  (`fwidth`). La ropa es vidrio tenue: un revés muy tenue da profundidad y un prepass oculta el
+  cuerpo; el mate opaco es una opción por capa, no el default. Sin anillos repetidos: las
+  horizontales solo son bordes de prenda (cuello, puños, dobladillos, tobillo), curvas con la
+  sección y nunca rectas.
 - La cabeza manda: ninguna capa tapa la cara ni la boca; el lip-sync sigue siendo el resultado de
   los articuladores de CHIMERA, no una animación propia de Quimera.
 - El código vive en `src/layers/`: `common.ts` (utilidades GLSL, regiones de recorte y ciclo de
-  vida), `outfit.ts` (ropa) y `hair.ts` (contrato del hito siguiente). `RigScene.tsx` solo monta las
-  capas, actualiza uniforms y libera materiales y meshes al desmontarse; la geometría es la del rig
-  y la libera `RigView`.
-- `validateScene()` valida por capa `enabled`, `color`, `material`, `density` y `seed`, además de `detail` en la
-  ropa y `length` en el pelo, con mensajes de error en español.
+  vida), `outfit.ts` (ropa), `outfitTuning.ts` (store ligero del panel, compartido con `scene.ts`
+  para los rangos) y `hair.ts` (contrato del hito siguiente). `RigScene.tsx` solo monta las capas,
+  actualiza uniforms y libera materiales y meshes al desmontarse; la geometría es la del rig y la
+  libera `RigView`. El efecto de montaje depende de una clave estructural que excluye los ajustes
+  del vidrio, así que mover un slider no reconstruye la escena.
+- `validateScene()` valida por capa `enabled`, `color`, `material`, `density` y `seed`, además de
+  `detail` y los cinco ajustes del vidrio (`fill`, `edgeGain`, `lineAlpha`, `backAlpha`, `offset`)
+  en la ropa y `length` en el pelo, con mensajes de error en español.
 
 ## Dependencia fijada
 

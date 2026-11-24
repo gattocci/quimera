@@ -13,6 +13,7 @@
 
 import type { Lang, DialectPreset } from "@chimera/wasm/engine.ts";
 import type { BodyName } from "@chimera/wasm/../../src/worklet/protocol.ts";
+import { OUTFIT_TUNING_RANGES } from "./layers/outfitTuning.ts";
 
 // ──────────────────────────────────────────── types ──────────────────────────
 
@@ -67,6 +68,16 @@ export interface OutfitLayer extends BodyLayer {
   variant?: "tee-pants";
   /** 0 = silueta y bordes; 0.5 = + curvas; 1 = + costuras y pliegues. Por defecto 0.5. */
   detail?: number;
+  /** Vidrio tenue: relleno central (0..0.5), por defecto 0.10. */
+  fill?: number;
+  /** Ganancia del fresnel (0..2), por defecto 1.6. */
+  edgeGain?: number;
+  /** Alpha de silueta, curvas, costuras y pliegues (0..1), por defecto 0.35. */
+  lineAlpha?: number;
+  /** Alpha del revés de la prenda (0..0.6), por defecto 0.25. */
+  backAlpha?: number;
+  /** Desplazamiento de la tela sobre la normal (0.6..2 cm), por defecto 1.1. */
+  offset?: number;
 }
 
 /** Pelo corto o largo; `length` solo se usa en esta capa (renderer pendiente). */
@@ -229,10 +240,22 @@ function validateLayers(value: unknown, where: string): CharacterLayers | undefi
         throw new Error(`${where}: "outfit.detail" debe estar entre 0 y 1.`);
       }
       if (l.length !== undefined) throw new Error(`${where}: "outfit.length" solo aplica a la capa de pelo.`);
+      const tuningKeys = ["fill", "edgeGain", "lineAlpha", "backAlpha", "offset"] as const;
+      const tuning: Partial<OutfitLayer> = {};
+      for (const key of tuningKeys) {
+        const value = l[key];
+        if (value === undefined) continue;
+        const { min, max } = OUTFIT_TUNING_RANGES[key];
+        if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+          throw new Error(`${where}: "outfit.${key}" debe estar entre ${min} y ${max}.`);
+        }
+        (tuning as Record<string, number>)[key] = value;
+      }
       out.outfit = {
         ...common,
         ...(l.variant !== undefined ? { variant: l.variant as "tee-pants" } : {}),
         ...(l.detail !== undefined ? { detail: l.detail as number } : {}),
+        ...tuning,
       };
     } else {
       if (l.variant !== undefined && !HAIR_VARIANTS.includes(l.variant as "short" | "long")) {

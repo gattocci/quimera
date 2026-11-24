@@ -85,6 +85,11 @@ body { min-width: 320px; margin: 0; background: #02070b; }
 .quimera-field input[type="range"] { accent-color: var(--blue); cursor: pointer; }
 .quimera-field-color { flex: 0 0 45px; }
 .quimera-field-color input[type="color"] { width: 100%; height: 26px; padding: 0; border: 1px solid var(--frame); background: transparent; cursor: pointer; }
+.quimera-cloth-panel { border-top: 1px solid var(--frame); padding-top: 6px; }
+.quimera-cloth-panel > summary { font: 9px "Archivo", sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--blue); cursor: pointer; }
+.quimera-cloth-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; padding: 8px 0; }
+.quimera-cloth-grid .quimera-field { flex: initial; }
+.quimera-cloth-grid output { color: var(--text); font-variant-numeric: tabular-nums; }
 /* Events Editor */
 .quimera-events-editor { display: grid; gap: 8px; max-height: 480px; overflow-y: auto; padding-right: 4px; }
 .quimera-editor-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid var(--frame); background: rgba(2, 7, 11, 0.8); }

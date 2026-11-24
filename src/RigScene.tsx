@@ -19,7 +19,7 @@
  *  - Live articulatory lip-sync + telemetry for the active speaker.
  */
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { TelemetryMessage } from "@chimera/wasm/../../src/worklet/protocol.ts";
@@ -29,6 +29,12 @@ import type { BodyStyle, Character, PostureHint } from "./scene.ts";
 import { POSTURE_PRESETS, listeningPose, lerpPose, clonePose } from "./poses.ts";
 import { CLOTH_REGION_GLSL, type LayerHandle } from "./layers/common.ts";
 import { createOutfitLayer, type OutfitLayerHandle, type OutfitSpec } from "./layers/outfit.ts";
+import {
+  getOutfitTuning,
+  resetOutfitTuning,
+  setOutfitTuning,
+  type OutfitTuning,
+} from "./layers/outfitTuning.ts";
 import { createHairLayer, type HairSpec } from "./layers/hair.ts";
 import type { Pose } from "@chimera/rig/pose.ts";
 
@@ -264,6 +270,34 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
   const bodyStyleRef = useRef(bodyStyle);
   bodyStyleRef.current = bodyStyle;
 
+  // La escena solo se reconstruye si cambia algo estructural. Los ajustes del vidrio (fill,
+  // edgeGain, lineAlpha, backAlpha, offset) viajan por el store ligero y actualizan uniforms en
+  // el bucle, así que mover un slider no reinicia el rig ni la cabeza.
+  const sceneStructureKey = useMemo(
+    () =>
+      JSON.stringify(
+        characters.map((c) => ({
+          id: c.id,
+          body: c.body,
+          stageX: c.stageX,
+          bodyStyle: c.bodyStyle,
+          layers: {
+            hair: c.layers?.hair,
+            outfit: c.layers?.outfit && {
+              variant: c.layers.outfit.variant,
+              enabled: c.layers.outfit.enabled,
+              color: c.layers.outfit.color,
+              material: c.layers.outfit.material,
+              detail: c.layers.outfit.detail,
+              seed: c.layers.outfit.seed,
+              density: c.layers.outfit.density,
+            },
+          },
+        }))
+      ),
+    [characters]
+  );
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -288,6 +322,22 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       p.outfitSpec = ch.layers?.outfit;
       p.hairEnabled = !!ch.layers?.hair && ch.layers.hair.enabled !== false;
       p.outfit.setSpec(p.outfitSpec);
+
+      // El JSON de la escena siembra el store del panel; el panel escribe en ambos sitios, así que
+      // al arrastrar un slider este valor coincide con el que ya se aplicó en el frame anterior.
+      const outfit = p.outfitSpec;
+      const patch: Partial<OutfitTuning> = {};
+      let hasTuning = false;
+      for (const key of ["fill", "edgeGain", "lineAlpha", "backAlpha", "offset"] as const) {
+        const value = outfit?.[key];
+        if (value !== undefined) {
+          patch[key] = value;
+          hasTuning = true;
+        }
+      }
+      if (hasTuning) setOutfitTuning(p.id, patch);
+      else resetOutfitTuning(p.id);
+
       syncLayerVisibility(p);
     };
 
@@ -482,6 +532,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           const p = performers[i];
           const chNow = charactersRef.current[i];
           if (chNow) syncLayers(p, chNow);
+          // Uniforms en vivo: nunca reconstruye la escena, solo escribe cinco floats por material.
+          p.outfit.setTuning(getOutfitTuning(p.id));
           const isCurrentSpeaker = hasSpeaker && p.id === activeId;
           const isSolo = performers.length === 1;
 
@@ -607,7 +659,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       }
       renderer.dispose();
     };
-  }, [characters]);
+  }, [sceneStructureKey]);
 
   return (
     <canvas

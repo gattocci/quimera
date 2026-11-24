@@ -23,8 +23,24 @@ import {
 } from "./scene.ts";
 import { POSTURE_LABELS } from "./poses.ts";
 import { seedFromId } from "./layers/common.ts";
+import {
+  OUTFIT_TUNING_RANGES,
+  getOutfitTuning,
+  resetOutfitTuning,
+  setOutfitTuning,
+  type OutfitTuningKey,
+} from "./layers/outfitTuning.ts";
 
 type AppMode = "scene" | "studio" | "free";
+
+/** Sliders del vidrio: mismo orden que el store y que los campos validados del JSON. */
+const CLOTH_SLIDERS: Array<{ key: OutfitTuningKey; label: string; step: number }> = [
+  { key: "fill", label: "Relleno", step: 0.01 },
+  { key: "edgeGain", label: "Borde", step: 0.05 },
+  { key: "lineAlpha", label: "Líneas", step: 0.01 },
+  { key: "backAlpha", label: "Revés", step: 0.01 },
+  { key: "offset", label: "Offset cm", step: 0.05 },
+];
 
 export function SceneApp() {
   const [mode, setMode] = useState<AppMode>("scene");
@@ -200,6 +216,24 @@ export function SceneApp() {
       };
     }
     updateCharacter(ch.id, { layers });
+  };
+
+  /** Aplica un ajuste del vidrio en vivo (store ligero) y lo persiste en `layers.outfit`. */
+  const tuneOutfit = (ch: Character, key: OutfitTuningKey, value: number) => {
+    setOutfitTuning(ch.id, { [key]: value });
+    updateOutfit(ch, { [key]: value } as Partial<OutfitLayer>);
+  };
+
+  /** Vuelve a los defaults sembrados por la URL en DEV (o a las constantes en producción). */
+  const resetCloth = (ch: Character) => {
+    const d = resetOutfitTuning(ch.id);
+    updateOutfit(ch, {
+      fill: d.fill,
+      edgeGain: d.edgeGain,
+      lineAlpha: d.lineAlpha,
+      backAlpha: d.backAlpha,
+      offset: d.offset,
+    });
   };
 
   const addCharacter = () => {
@@ -693,17 +727,48 @@ export function SceneApp() {
                           </select>
                         </label>
                         {ch.layers?.outfit && (
-                          <label className="quimera-field">
-                            Detalle ({(ch.layers.outfit.detail ?? 0.5).toFixed(2)})
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.05"
-                              value={ch.layers.outfit.detail ?? 0.5}
-                              onChange={(e) => updateOutfit(ch, { detail: Number(e.target.value) })}
-                            />
-                          </label>
+                          <>
+                            <label className="quimera-field">
+                              Detalle ({(ch.layers.outfit.detail ?? 0.5).toFixed(2)})
+                              <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={ch.layers.outfit.detail ?? 0.5}
+                                onChange={(e) => updateOutfit(ch, { detail: Number(e.target.value) })}
+                              />
+                            </label>
+                            <details className="quimera-cloth-panel">
+                              <summary>Vidrio · ajustes</summary>
+                              <div className="quimera-cloth-grid">
+                                {CLOTH_SLIDERS.map(({ key, label, step }) => {
+                                  const { min, max } = OUTFIT_TUNING_RANGES[key];
+                                  const value = getOutfitTuning(ch.id)[key];
+                                  return (
+                                    <label className="quimera-field" key={key}>
+                                      {label} <output>{value.toFixed(2)}</output>
+                                      <input
+                                        type="range"
+                                        min={min}
+                                        max={max}
+                                        step={step}
+                                        value={value}
+                                        onChange={(e) => tuneOutfit(ch, key, Number(e.target.value))}
+                                      />
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <button
+                                type="button"
+                                className="quimera-btn-small"
+                                onClick={() => resetCloth(ch)}
+                              >
+                                Restablecer
+                              </button>
+                            </details>
+                          </>
                         )}
                       </div>
                     </div>

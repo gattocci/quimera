@@ -1,19 +1,26 @@
 /**
- * Capa de ropa sobre el cuerpo base: vidrio emisivo por defecto, mate opaco como opción.
+ * Capa de ropa sobre el cuerpo base: vidrio tenue por defecto, mate opaco como opción.
  *
- * Cabeza, cuerpo y pelo son LUZ; la ropa también emite. La tela no es plástico: es un cristal con
- * borde luminoso que tapa el cuerpo holográfico que queda detrás. Para separar OCULTAR de DIBUJAR:
- *   1) prepass de profundidad: mismo casco, `colorWrite: false`, `depthWrite: true`, antes del cuerpo;
- *   2) pase visible de vidrio: transparente, sin `depthWrite`, `depthFunc: LessEqual`, solo caras
- *      frontales (el prepass ya esconde las traseras);
- *   3) pase mate opaco: solo cuando `material: "solid"` (o `?clothSolid=1` en desarrollo).
+ * Cabeza, cuerpo, ropa y pelo son LUZ. El vidrio necesita profundidad: un relleno translúcido
+ * sobre negro se lee como gris plano. Para devolverle volumen sin volver a mostrar el cuerpo:
+ *   1) revés del vidrio (BackSide, transparente, renderOrder -8): solo silueta, bordes, curvas y
+ *      costuras muy tenues, dibujado antes de escribir profundidad;
+ *   2) prepass (renderOrder -7, transparente para que Three.js lo ordene después del revés): mismo
+ *      casco, `colorWrite: false`, `depthWrite: true`, tapa el cuerpo holográfico;
+ *   3) vidrio visible (FrontSide, sin `depthWrite`, `LessEqual`, renderOrder 1): relleno bajo con
+ *      fresnel ganable y trazo luminoso;
+ *   4) mate opaco opcional (renderOrder -5), solo con `material: "solid"`.
  *
- * El recorte sigue anclado a `aRest` y usa las regiones del rigor; la malla es la del rig, así que
- * la ropa sigue `body.turn` y los gestos sin deslizarse.
+ * En la franja y = 14..34 cm remera y pantalón se solapan (228 vértices del rig con ambas máscaras
+ * en 1.00). Los pases visibles del pantalón se descartan donde la remera cubre, para no sumar alpha.
+ *
+ * El recorte sigue anclado a `aRest` y usa las mismas regiones que el cuerpo; la malla es la del
+ * rig, así que la ropa sigue `body.turn` y los gestos sin deslizarse. No se han tocado los umbrales
+ * de `CLOTH_REGION_GLSL` ni de `outfitCoverageOut()`.
  *
  * En desarrollo se pueden ajustar los valores sin recompilar:
- *   ?clothSolid=0&clothFill=0.22&clothAlpha=0.5&clothEdge=0.85&clothOffset=1.1
- *   &shirtColor=aeb9c3&pantsColor=66737f
+ *   ?clothSolid=0&clothFill=0.10&clothEdgeGain=1.6&clothAlpha=0.35&clothBackAlpha=0.25
+ *   &clothEdge=0.85&clothOffset=1.1&shirtColor=aeb9c3&pantsColor=66737f
  */
 
 import * as THREE from "three";
@@ -25,6 +32,10 @@ import {
   makeLayerMesh,
   type LayerHandle,
 } from "./common.ts";
+import {
+  seedOutfitTuningDefaults,
+  type OutfitTuning,
+} from "./outfitTuning.ts";
 
 const OUTFIT_VERT = /* glsl */ `
 attribute vec3 aRest;
@@ -44,16 +55,17 @@ void main() {
 }
 `;
 
-/** Preludio compartido: uniforms, regiones y la cobertura de render (extends regiones, no las cambia). */
+/** Preludio compartido por los cuatro pases. */
 const OUTFIT_COMMON = /* glsl */ `
 uniform vec3 uColor;
 uniform vec3 uEdgeColor;
 uniform vec3 uHaloColor;
-uniform float uAlpha;     // trazo de curvas, costuras y pliegues
-uniform float uFill;      // alpha del vidrio en el centro; sube con el fresnel
-uniform float uEdgeAlpha; // bordes de prenda, luminosos
-uniform float uSolid;     // 0 = vidrio, 1 = mate opaco
-uniform float uBack;
+uniform float uAlpha;      // trazo de curvas, costuras y pliegues
+uniform float uFill;       // alpha del relleno en el centro
+uniform float uEdgeGain;   // cuánto sube el alpha hacia la silueta
+uniform float uBackAlpha;  // alpha del revés
+uniform float uEdgeAlpha;  // bordes de prenda, luminosos
+uniform float uSolid;      // 0 = vidrio, 1 = mate opaco
 uniform float uDetail;
 uniform float uSeed;
 uniform float uGarment; // 0 = remera, 1 = pantalón
@@ -74,8 +86,9 @@ float clothCurvedY(vec3 r, vec3 nObj, float baseY) {
 
 // Cobertura de render. CLOTH_REGION_GLSL queda intacto: aquí solo se cierran los huecos vistos en
 // el rig (hombro, pantorrilla, entrepierna y costado) para que no aparezca el cuerpo debajo.
-float outfitCoverageOut(vec3 r) {
-  if (uGarment < 0.5) {
+// El parámetro garment permite preguntar por la otra prenda sin cambiar uniforms.
+float outfitCoverageFor(vec3 r, float garment) {
+  if (garment < 0.5) {
     float top = 1.0 - smoothstep(clothNeckY(r) - CLOTH_FEATHER, clothNeckY(r) + CLOTH_FEATHER, r.y);
     float hem = smoothstep(CLOTH_HIP_Y - CLOTH_FEATHER, CLOTH_HIP_Y + CLOTH_FEATHER, r.y);
     float guard = 1.0 - smoothstep(62.0, 65.0, r.y);
@@ -101,6 +114,100 @@ float outfitCoverageOut(vec3 r) {
   // Relleno del deltoides entre piernas: arriba se cierra, se abre hacia media pierna.
   float bridge = smoothstep(-34.0, -18.0, r.y);
   return max(max(clothPantsMask(r), legSide), top * hem * outer * bridge);
+}
+
+float outfitCoverageOut(vec3 r) { return outfitCoverageFor(r, uGarment); }
+float shirtCovers(vec3 r) { return outfitCoverageFor(r, 0.0); }
+
+// Bordes reales de la prenda: cuello, puño, dobladillo de la remera y tobillo del pantalón.
+// La cintura sigue sin dibujarse como cinturón.
+float outfitBrightEdge(vec3 r, vec3 nObj, float garment, float mask) {
+  float brightEdge = 0.0;
+  if (garment < 0.5) {
+    // Escote: ya curva por clothNeckY (más bajo adelante); no lo subimos hacia la mandíbula.
+    float neckline = lineAt(r.y - clothNeckY(r)) * smoothstep(50.0, 56.0, r.y);
+    float hem = lineAt(r.y - clothCurvedY(r, nObj, CLOTH_HIP_Y))
+              * (1.0 - smoothstep(17.0, 20.0, abs(r.z)));
+    // Puño: anillo cerrado en |z| = CLOTH_SLEEVE_Z (perpendicular al eje del brazo en A-pose).
+    float armR = length(vec2(r.x - 2.0, r.y - 42.0));
+    float cuff = lineAt(abs(r.z) - CLOTH_SLEEVE_Z)
+               * smoothstep(4.0, 6.0, armR) * (1.0 - smoothstep(9.0, 11.0, armR));
+    brightEdge = max(max(neckline, hem), cuff);
+  } else {
+    brightEdge = lineAt(r.y - clothCurvedY(r, nObj, CLOTH_ANKLE_Y))
+               * (1.0 - smoothstep(26.0, 30.0, abs(r.z)));
+  }
+  return brightEdge * smoothstep(0.08, 0.4, mask);
+}
+
+// Curvas verticales ancladas al reposo; aparecen a partir de detail = 0.3.
+float outfitCurves(vec3 r) {
+  float tCurve = smoothstep(0.3, 0.55, uDetail);
+  float zStep = mix(34.0, 14.0, smoothstep(0.4, 1.0, uDetail));
+  float xStep = mix(26.0, 11.0, smoothstep(0.4, 1.0, uDetail));
+  float frontBack = smoothstep(3.0, 8.0, abs(r.x));
+  float flanks = smoothstep(9.0, 14.0, abs(r.z));
+  return max(layerSlice(r.z, zStep) * frontBack, layerSlice(r.x, xStep) * flanks) * tCurve;
+}
+
+// Costuras de hombro / costado y del exterior del pantalón; detail >= 0.78.
+float outfitSeam(vec3 r, float garment, float mask) {
+  float seam = 0.0;
+  if (garment < 0.5) {
+    float shoulder = lineAt(abs(r.z) - 18.0) * smoothstep(46.0, 52.0, r.y)
+                   * (1.0 - smoothstep(56.0, 60.0, r.y));
+    float side = lineAt(abs(r.z) - 15.5) * smoothstep(18.0, 22.0, r.y)
+               * (1.0 - smoothstep(52.0, 56.0, r.y));
+    seam = max(shoulder, side);
+  } else {
+    float width = 23.0 - 2.5 * smoothstep(CLOTH_ANKLE_Y, CLOTH_WAIST_Y, r.y);
+    seam = lineAt(abs(r.z) - width) * smoothstep(-62.0, -56.0, r.y)
+         * (1.0 - smoothstep(26.0, 32.0, r.y));
+  }
+  return seam * smoothstep(0.78, 0.98, uDetail) * smoothstep(0.15, 0.5, mask);
+}
+
+// Pliegues cortos junto al dobladillo; detail >= 0.82.
+float outfitFolds(vec3 r, float garment) {
+  float phase = layerHash(uSeed) * 6.2831853;
+  float hemY = garment < 0.5 ? CLOTH_HIP_Y : CLOTH_ANKLE_Y;
+  return layerSlice(abs(r.z) + 1.4 * sin(0.22 * r.y + phase), 9.0)
+       * (1.0 - smoothstep(16.0, 34.0, abs(r.y - hemY)))
+       * smoothstep(3.0, 8.0, abs(r.x)) * smoothstep(0.82, 1.0, uDetail);
+}
+
+// Peso compartido del trazo: silueta, fresnel, curvas, costuras y pliegues.
+float outfitLineWeight(vec3 r, vec3 nObj, float garment, float mask, float facing,
+                       out float brightEdge) {
+  float outline = 1.0 - smoothstep(0.07, 0.24, facing);
+  float halo = pow(1.0 - facing, 2.6);
+  brightEdge = outfitBrightEdge(r, nObj, garment, mask);
+  return outline * 0.85 + halo * 0.12
+       + outfitCurves(r) * 0.7 + outfitSeam(r, garment, mask) * 0.7
+       + outfitFolds(r, garment) * 0.6;
+}
+`;
+
+/** Revés del vidrio: antes del prepass, sin profundidad y con un trazo muy tenue. */
+const OUTFIT_BACK_FRAG = /* glsl */ `
+${OUTFIT_COMMON}
+
+void main() {
+  float mask = outfitCoverageOut(vRest);
+  if (uGarment > 0.5 && shirtCovers(vRest) > 0.5) discard;
+  if (mask < 0.02) discard;
+
+  vec3 n = normalize(vN), v = normalize(vV);
+  float facing = abs(dot(n, v));
+  float brightEdge;
+  float weight = outfitLineWeight(vRest, vLocalN, uGarment, mask, facing, brightEdge);
+  // Solo un susurro de relleno (0.05) para que el revés no se lea como una segunda tela.
+  float alpha = clamp(uBackAlpha * mask * (0.05 + weight + brightEdge * 0.8), 0.0, 0.6);
+  if (alpha < 0.006) discard;
+
+  vec3 col = mix(uColor * 0.75, uEdgeColor * 0.85, brightEdge * 0.7)
+           + uHaloColor * 0.18 * pow(1.0 - facing, 2.6);
+  gl_FragColor = vec4(layerEncode(col), alpha);
 }
 `;
 
@@ -140,75 +247,24 @@ ${OUTFIT_COMMON}
 
 void main() {
   float mask = outfitCoverageOut(vRest);
+  // En el solape con la remera (y = 14..34 cm) el pantalón no dibuja: dos rellenos sumaban alpha
+  // y dejaban una banda más clara. El prepass del pantalón sigue activo, así que el cuerpo no asoma.
+  if (uGarment > 0.5 && shirtCovers(vRest) > 0.5) discard;
   if (mask < 0.02) discard;
 
   vec3 n = normalize(vN), v = normalize(vV);
   float facing = abs(dot(n, v));
-  float outline = 1.0 - smoothstep(0.07, 0.24, facing);
-  float halo = pow(1.0 - facing, 2.6); // fresnel suave
+  float brightEdge;
+  float weight = outfitLineWeight(vRest, vLocalN, uGarment, mask, facing, brightEdge);
 
-  // Bordes reales de la prenda: cuello, puño, dobladillo de la remera y tobillo del pantalón.
-  // La cintura sigue sin dibujarse como cinturón.
-  float brightEdge = 0.0;
-  if (uGarment < 0.5) {
-    // Escote: ya curva por clothNeckY (más bajo adelante); no lo subimos hacia la mandíbula.
-    float neckline = lineAt(vRest.y - clothNeckY(vRest))
-                   * smoothstep(50.0, 56.0, vRest.y);
-    float hem = lineAt(vRest.y - clothCurvedY(vRest, vLocalN, CLOTH_HIP_Y))
-              * (1.0 - smoothstep(17.0, 20.0, abs(vRest.z)));
-    // Puño: anillo cerrado en |z| = CLOTH_SLEEVE_Z (perpendicular al eje del brazo en A-pose).
-    // Antes se recortaba en y = 32..50 y parecía un corte seco; ahora envuelve todo el bíceps.
-    float armR = length(vec2(vRest.x - 2.0, vRest.y - 42.0));
-    float cuff = lineAt(abs(vRest.z) - CLOTH_SLEEVE_Z)
-               * smoothstep(4.0, 6.0, armR) * (1.0 - smoothstep(9.0, 11.0, armR));
-    brightEdge = max(max(neckline, hem), cuff);
-  } else {
-    float ankle = lineAt(vRest.y - clothCurvedY(vRest, vLocalN, CLOTH_ANKLE_Y))
-                * (1.0 - smoothstep(26.0, 30.0, abs(vRest.z)));
-    brightEdge = ankle;
-  }
-  brightEdge *= smoothstep(0.08, 0.4, mask);
-
-  // Un único sistema de detalle: 0 = silueta + bordes, 0.5 = + curvas, 1 = + costuras y pliegues.
-  float tCurve = smoothstep(0.3, 0.55, uDetail);
-  float tSeam = smoothstep(0.78, 0.98, uDetail);
-  float tFold = smoothstep(0.82, 1.0, uDetail);
-  float zStep = mix(34.0, 14.0, smoothstep(0.4, 1.0, uDetail));
-  float xStep = mix(26.0, 11.0, smoothstep(0.4, 1.0, uDetail));
-  float frontBack = smoothstep(3.0, 8.0, abs(vRest.x));
-  float flanks = smoothstep(9.0, 14.0, abs(vRest.z));
-  float curves = max(layerSlice(vRest.z, zStep) * frontBack, layerSlice(vRest.x, xStep) * flanks);
-
-  float seam = 0.0;
-  if (uGarment < 0.5) {
-    float shoulder = lineAt(abs(vRest.z) - 18.0) * smoothstep(46.0, 52.0, vRest.y)
-                   * (1.0 - smoothstep(56.0, 60.0, vRest.y));
-    float side = lineAt(abs(vRest.z) - 15.5) * smoothstep(18.0, 22.0, vRest.y)
-               * (1.0 - smoothstep(52.0, 56.0, vRest.y));
-    seam = max(shoulder, side);
-  } else {
-    float width = 23.0 - 2.5 * smoothstep(CLOTH_ANKLE_Y, CLOTH_WAIST_Y, vRest.y);
-    seam = lineAt(abs(vRest.z) - width) * smoothstep(-62.0, -56.0, vRest.y)
-         * (1.0 - smoothstep(26.0, 32.0, vRest.y));
-  }
-  seam *= smoothstep(0.15, 0.5, mask);
-
-  float phase = layerHash(uSeed) * 6.2831853;
-  float hemY = uGarment < 0.5 ? CLOTH_HIP_Y : CLOTH_ANKLE_Y;
-  float folds = layerSlice(abs(vRest.z) + 1.4 * sin(0.22 * vRest.y + phase), 9.0)
-              * (1.0 - smoothstep(16.0, 34.0, abs(vRest.y - hemY))) * frontBack;
-
-  // Cristal: uFill = 0.22 en el centro y ≈ 0.50 en la silueta (fresnel).
-  float glassAlpha = uFill * mask * (1.0 + 1.27 * halo) * (1.0 - uSolid);
-  float lineAlpha = uAlpha * mask * (outline * 0.85 + halo * 0.12
-                  + curves * tCurve * 0.7 + seam * tSeam * 0.7 + folds * tFold * 0.6);
+  float halo = pow(1.0 - facing, 2.6);
+  float glassAlpha = uFill * mask * (1.0 + uEdgeGain * halo) * (1.0 - uSolid);
+  float lineAlpha = uAlpha * mask * weight;
   float edgeAlpha = uEdgeAlpha * brightEdge;
-  float backFactor = uBack > 0.5 ? 0.32 : 1.0;
-  float alpha = clamp((glassAlpha + lineAlpha + edgeAlpha) * backFactor, 0.0, 1.0);
+  float alpha = clamp(glassAlpha + lineAlpha + edgeAlpha, 0.0, 1.0);
   if (alpha < 0.006) discard;
 
-  vec3 col = mix(uColor, uEdgeColor, brightEdge * 0.85);
-  col += uHaloColor * 0.30 * halo;
+  vec3 col = mix(uColor, uEdgeColor, brightEdge * 0.85) + uHaloColor * 0.30 * halo;
   gl_FragColor = vec4(layerEncode(col), alpha);
 }
 `;
@@ -225,19 +281,24 @@ export interface OutfitSpec {
   /** Semilla determinista para la fase de los pliegues. */
   seed?: number;
   density?: number;
+  /** Ajustes vidrio persistidos en el JSON y reflejados en el store ligero del panel. */
+  fill?: number;
+  edgeGain?: number;
+  lineAlpha?: number;
+  backAlpha?: number;
+  offset?: number;
 }
 
 export interface OutfitLayerHandle extends LayerHandle {
   setSpec(spec: OutfitSpec | undefined): void;
+  /** Aplica los ajustes del panel sin reconstruir la escena ni tocar la geometría. */
+  setTuning(tuning: OutfitTuning): void;
 }
 
-/** Valores finales de la prenda; en producción se usan siempre estos. */
+/** Valores que no van en el panel: acabado, borde y colores. */
 const OUTFIT_TUNING = {
   solid: 0,
-  fill: 0.22,
-  alpha: 0.5,
   edge: 0.85,
-  offset: 1.1,
   shirtColor: "#aeb9c3",
   pantsColor: "#66737f",
 };
@@ -247,68 +308,84 @@ const HALO_LINEAR = new THREE.Vector3(0.06, 0.36, 0.68);
 /** Borde luminoso de la prenda, en luz lineal (#d0d8df). */
 const EDGE_LINEAR = hexToLinear("#d0d8df");
 
-/**
- * Solo en desarrollo. Los colores se aceptan con o sin `#` y con seis dígitos hexadecimales;
- * cualquier valor inválido cae al color por defecto de esa prenda.
- */
-function devTuning(): typeof OUTFIT_TUNING {
-  if (!import.meta.env.DEV || typeof window === "undefined") return OUTFIT_TUNING;
+/** Solo en desarrollo: los parámetros de URL siembran los defaults del store del panel. */
+function devTuning() {
+  const fallback = { ...OUTFIT_TUNING };
+  const tuning: Partial<OutfitTuning> = {};
+  if (!import.meta.env.DEV || typeof window === "undefined") return { fallback, tuning };
   const params = new URLSearchParams(window.location.search);
-  const read = (key: string, fallback: number, min: number, max: number) => {
+  const read = (key: string, min: number, max: number) => {
     const raw = params.get(key);
-    if (raw === null) return fallback;
+    if (raw === null) return undefined;
     const value = Number(raw);
-    return Number.isFinite(value) ? THREE.MathUtils.clamp(value, min, max) : fallback;
+    return Number.isFinite(value) ? THREE.MathUtils.clamp(value, min, max) : undefined;
   };
-  const readHex = (key: string, fallback: string) => {
+  const readHex = (key: string, def: string) => {
     const raw = params.get(key)?.replace(/^#/, "");
-    return raw && /^[0-9a-fA-F]{6}$/.test(raw) ? `#${raw.toLowerCase()}` : fallback;
+    return raw && /^[0-9a-fA-F]{6}$/.test(raw) ? `#${raw.toLowerCase()}` : def;
   };
-  return {
-    solid: read("clothSolid", OUTFIT_TUNING.solid, 0, 1),
-    fill: read("clothFill", OUTFIT_TUNING.fill, 0, 1),
-    alpha: read("clothAlpha", OUTFIT_TUNING.alpha, 0, 1),
-    edge: read("clothEdge", OUTFIT_TUNING.edge, 0, 1),
-    offset: read("clothOffset", OUTFIT_TUNING.offset, 0, 4),
-    shirtColor: readHex("shirtColor", OUTFIT_TUNING.shirtColor),
-    pantsColor: readHex("pantsColor", OUTFIT_TUNING.pantsColor),
-  };
+  Object.assign(tuning, {
+    fill: read("clothFill", 0, 0.5),
+    edgeGain: read("clothEdgeGain", 0, 2),
+    lineAlpha: read("clothAlpha", 0, 1),
+    backAlpha: read("clothBackAlpha", 0, 0.6),
+    offset: read("clothOffset", 0.6, 2),
+  });
+  fallback.solid = read("clothSolid", 0, 1) ?? fallback.solid;
+  fallback.edge = read("clothEdge", 0, 1) ?? fallback.edge;
+  fallback.shirtColor = readHex("shirtColor", fallback.shirtColor);
+  fallback.pantsColor = readHex("pantsColor", fallback.pantsColor);
+  return { fallback, tuning };
 }
 
-const TUNING = devTuning();
+const DEV = devTuning();
+const TUNING = DEV.fallback;
+seedOutfitTuningDefaults(DEV.tuning);
 
 type Garment = "shirt" | "pants";
-type Pass = "depth" | "solid" | "glass";
+type Pass = "back" | "depth" | "solid" | "glass";
+
+const PASS_FRAG: Record<Pass, string> = {
+  back: OUTFIT_BACK_FRAG,
+  depth: OUTFIT_DEPTH_FRAG,
+  solid: OUTFIT_SOLID_FRAG,
+  glass: OUTFIT_GLASS_FRAG,
+};
 
 function makeMaterial(garment: Garment, pass: Pass, color: string): THREE.ShaderMaterial {
+  const isBack = pass === "back";
   const isDepth = pass === "depth";
   const isSolid = pass === "solid";
   return new THREE.ShaderMaterial({
     vertexShader: OUTFIT_VERT,
-    fragmentShader: isDepth ? OUTFIT_DEPTH_FRAG : isSolid ? OUTFIT_SOLID_FRAG : OUTFIT_GLASS_FRAG,
+    fragmentShader: PASS_FRAG[pass],
     uniforms: {
       uColor: { value: hexToLinear(color) },
       uEdgeColor: { value: EDGE_LINEAR.clone() },
       uHaloColor: { value: HALO_LINEAR.clone() },
-      uAlpha: { value: TUNING.alpha },
-      uFill: { value: TUNING.fill },
+      uAlpha: { value: 0.35 },
+      uFill: { value: 0.1 },
+      uEdgeGain: { value: 1.6 },
+      uBackAlpha: { value: 0.25 },
       uEdgeAlpha: { value: TUNING.edge },
       uSolid: { value: TUNING.solid },
-      uBack: { value: 0 },
       uDetail: { value: 0.5 },
       uSeed: { value: 0 },
       uGarment: { value: garment === "shirt" ? 0 : 1 },
       uPx: { value: 1.4 },
-      uOffset: { value: TUNING.offset },
+      uOffset: { value: 1.1 },
     },
-    transparent: pass === "glass",
-    side: THREE.FrontSide,
+    // Three.js dibuja la lista opaca antes que la transparente, y renderOrder solo ordena dentro
+    // de cada lista. El prepass debe ser transparente para que el revés (-8) se dibuje ANTES que
+    // él (-7) y que el cuerpo (-3/-2) siga quedando oculto por su profundidad.
+    transparent: isBack || isDepth || pass === "glass",
+    side: isBack ? THREE.BackSide : THREE.FrontSide,
     colorWrite: !isDepth,
     depthWrite: isDepth || isSolid,
     depthTest: true,
     depthFunc: THREE.LessEqualDepth,
-    // El prepass se aparta un pelo del pase visible para no pelear con el mate; el vidrio no
-    // escribe profundidad y con LessEqual dibuja sobre la misma superficie sin z-fighting.
+    // El prepass se aparta un pelo del pase visible para no pelear con él; el vidrio no escribe
+    // profundidad y con LessEqual dibuja sobre la misma superficie sin z-fighting.
     polygonOffset: isDepth,
     polygonOffsetFactor: isDepth ? 1 : 0,
     polygonOffsetUnits: isDepth ? 1 : 0,
@@ -327,25 +404,42 @@ export function createOutfitLayer(
   const materials: THREE.ShaderMaterial[] = [];
   const meshes: THREE.Mesh[] = [];
   const solidMeshes: THREE.Mesh[] = [];
-  // Prepass antes del cuerpo (-3/-2); mate antes que el trazo; vidrio y líneas después del cuerpo.
-  const orders = { depth: -7, solid: -5, glass: 1 };
+  const backMeshes: THREE.Mesh[] = [];
+  // Revés antes del prepass (-7) y del cuerpo (-3/-2); mate antes que el vidrio; vidrio al final.
+  const orders: Record<Pass, number> = { back: -8, depth: -7, solid: -5, glass: 1 };
 
   for (const garment of ["shirt", "pants"] as const) {
     const color = spec?.color ?? (garment === "shirt" ? TUNING.shirtColor : TUNING.pantsColor);
+    const back = makeMaterial(garment, "back", color);
     const depth = makeMaterial(garment, "depth", color);
     const solid = makeMaterial(garment, "solid", color);
     const glass = makeMaterial(garment, "glass", color);
-    materials.push(depth, solid, glass);
-    const depthMesh = makeLayerMesh(parent, geometry, depth, orders.depth);
+    materials.push(back, depth, solid, glass);
+    const backMesh = makeLayerMesh(parent, geometry, back, orders.back);
     const solidMesh = makeLayerMesh(parent, geometry, solid, orders.solid);
-    const glassMesh = makeLayerMesh(parent, geometry, glass, orders.glass);
-    meshes.push(depthMesh, solidMesh, glassMesh);
+    meshes.push(
+      backMesh,
+      makeLayerMesh(parent, geometry, depth, orders.depth),
+      solidMesh,
+      makeLayerMesh(parent, geometry, glass, orders.glass)
+    );
     solidMeshes.push(solidMesh);
+    backMeshes.push(backMesh);
   }
 
   const base = layerHandle(parent, meshes, materials);
   let visible = false;
   let useSolid = false;
+
+  const applyTuning = (t: OutfitTuning) => {
+    for (const m of materials) {
+      m.uniforms.uFill.value = t.fill;
+      m.uniforms.uEdgeGain.value = t.edgeGain;
+      m.uniforms.uAlpha.value = t.lineAlpha;
+      m.uniforms.uBackAlpha.value = t.backAlpha;
+      m.uniforms.uOffset.value = t.offset;
+    }
+  };
 
   const apply = (s: OutfitSpec | undefined) => {
     const detail = THREE.MathUtils.clamp(s?.detail ?? 0.5, 0, 1);
@@ -361,18 +455,19 @@ export function createOutfitLayer(
     }
     visible = !!s && s.enabled !== false;
     base.setVisible(visible);
-    // El mate solo se monta cuando se pide; el prepass y el vidrio están siempre activos.
+    // El mate solo se monta cuando se pide; el revés es exclusivo del vidrio. Prepass y vidrio
+    // (con uSolid = 1 reduce su relleno a cero y deja las líneas) quedan siempre activos.
     for (const m of solidMeshes) m.visible = visible && useSolid;
+    for (const m of backMeshes) m.visible = visible && !useSolid;
   };
   apply(spec);
 
-  return {
-    ...base,
-    setVisible(v: boolean) {
-      visible = v;
-      base.setVisible(v);
-      for (const m of solidMeshes) m.visible = v && useSolid;
-    },
-    setSpec: apply,
+  const setVisible = (v: boolean) => {
+    visible = v;
+    base.setVisible(v);
+    for (const m of solidMeshes) m.visible = v && useSolid;
+    for (const m of backMeshes) m.visible = v && !useSolid;
   };
+
+  return { ...base, setVisible, setTuning: applyTuning, setSpec: apply };
 }
