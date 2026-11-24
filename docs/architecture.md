@@ -33,10 +33,15 @@ completa de CHIMERA.
 
 El prototipo incluye:
 
-- **Modos de representación del cuerpo** (`src/RigScene.tsx`):
-  - *Cabeza sola (CHIMERA puro)*: suprime la malla densa del cuerpo; las cabezas flotan y conservan toda su física anatómica, respiración, giros mutuos y lip-sync.
-  - *Silueta etérea*: sombra sutil translúcida que da anclaje corporal sin opacar los órganos de la cabeza.
-  - *Malla rig*: visualización técnica completa del esqueleto y quads.
+- **Estética aprobada por defecto** (`src/SceneApp.tsx`, `src/RigScene.tsx`): cabeza anatómica en
+  modo `vocal` con cuerpo `head-only` (cabeza sola). Es la única combinación que se ofrece en la
+  barra principal: conserva la física anatómica, la respiración, los giros mutuos y el lip-sync de
+  CHIMERA sin anillos ni mallas que compitan con la cabeza. `vocal` es el look que articula los
+  labios desde los articuladores del motor.
+- **Estilos de cuerpo legacy**: `anatomic`, `ethereal` y `mesh` siguen marcados como `@deprecated`
+  en `BodyStyle` para poder leer escenas guardadas antes de este cambio. `validateScene()`
+  (`src/scene.ts`) los normaliza a `head-only` al importar y la interfaz no los muestra, así que un
+  JSON antiguo no puede reactivarlos.
 - **Estudio Creativo integrado** (`src/SceneApp.tsx`):
   - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario y color de acento.
   - *Editor de guiones y sentimientos*: agregar, editar, reordenar y eliminar líneas y pausas; asignación de actitudes por réplica (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).

@@ -28,8 +28,8 @@ export function SceneApp() {
   const [mode, setMode] = useState<AppMode>("scene");
 
   // ── Global Stage Appearance ──
-  const [headLook, setHeadLook] = useState<HeadLookName>("classic");
-  const [bodyStyle, setBodyStyle] = useState<BodyStyle>("anatomic");
+  const [headLook, setHeadLook] = useState<HeadLookName>("vocal");
+  const [bodyStyle, setBodyStyle] = useState<BodyStyle>("head-only");
   const [atmosphere, setAtmosphere] = useState<StageAtmosphere>("void");
   const rigSceneRef = useRef<RigSceneHandle>(null);
 
@@ -303,59 +303,29 @@ export function SceneApp() {
 
         {/* Floating Scene Controls Toolbar */}
         <div className="quimera-stage-bar">
-          {/* Body representation style */}
+          {/* Estética aprobada: cabeza anatómica en modo vocal, sin cuerpo que la contornee.
+              Los estilos legacy (anatomic/ethereal/mesh) siguen en el esquema solo para leer JSON
+              antiguo: validateScene() los normaliza a head-only y no se ofrecen en esta barra. */}
           <div className="quimera-tool-group">
             <span className="quimera-bar-label">Cuerpo:</span>
             <button
               type="button"
-              className={`quimera-tool-btn${bodyStyle === "anatomic" ? " is-active" : ""}`}
-              onClick={() => setBodyStyle("anatomic")}
-              title="Anillos anatómicos horizontales que continúan la estética exacta de la cabeza"
-            >
-              Anillos contorno
-            </button>
-            <button
-              type="button"
               className={`quimera-tool-btn${bodyStyle === "head-only" ? " is-active" : ""}`}
               onClick={() => setBodyStyle("head-only")}
-              title="Estética original: Cabeza sola flotante sin cuerpo"
+              title="Cabeza anatómica flotante, sin cuerpo que compita con ella"
             >
               Cabeza sola
             </button>
-            <button
-              type="button"
-              className={`quimera-tool-btn${bodyStyle === "ethereal" ? " is-active" : ""}`}
-              onClick={() => setBodyStyle("ethereal")}
-              title="Silueta tenue translúcida que no compite con la cabeza"
-            >
-              Silueta etérea
-            </button>
-            <button
-              type="button"
-              className={`quimera-tool-btn${bodyStyle === "mesh" ? " is-active" : ""}`}
-              onClick={() => setBodyStyle("mesh")}
-              title="Malla completa de rig"
-            >
-              Malla rig
-            </button>
           </div>
 
-          {/* Head look */}
+          {/* Head look: de las opciones de esta barra, "vocal" es la que articula los labios. */}
           <div className="quimera-tool-group">
             <span className="quimera-bar-label">Cabeza:</span>
             <button
               type="button"
-              className={`quimera-tool-btn${headLook === "classic" ? " is-active" : ""}`}
-              onClick={() => setHeadLook("classic")}
-              title="Estética anatómica clásica con anillos y mandíbula naranja"
-            >
-              Clásica
-            </button>
-            <button
-              type="button"
               className={`quimera-tool-btn${headLook === "vocal" ? " is-active" : ""}`}
               onClick={() => setHeadLook("vocal")}
-              title="Malla densa con rasgos externos"
+              title="Anatomía de CHIMERA con los labios articulando la voz"
             >
               Vocal
             </button>

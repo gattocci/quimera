@@ -16,13 +16,20 @@ import type { BodyName } from "@chimera/wasm/../../src/worklet/protocol.ts";
 
 export type BodyPreset = BodyName; // "male" | "female" | "child"
 
-/** Body presentation style:
- * - "anatomic": Horizontal contour slice rings matching the exact aesthetic of the CHIMERA head.
- * - "head-only": Standalone floating head with zero body clutter.
- * - "ethereal": Faint translucent contour silhouette.
- * - "mesh": Full technical quad wireframe rig.
+/** Presentación del cuerpo en escena.
+ *
+ * El único estilo soportado es `head-only`: la cabeza anatómica de CHIMERA flotando, sin un cuerpo
+ * que la contornee. Los otros valores son legacy: quedan en el tipo para poder leer JSON antiguo,
+ * pero `validateScene()` los normaliza a `head-only` y la interfaz no los ofrece.
  */
-export type BodyStyle = "anatomic" | "head-only" | "ethereal" | "mesh";
+export type BodyStyle =
+  | "head-only"
+  /** @deprecated Legacy: anillos de contorno. Se normaliza a `head-only` al importar. */
+  | "anatomic"
+  /** @deprecated Legacy: silueta etérea. Se normaliza a `head-only` al importar. */
+  | "ethereal"
+  /** @deprecated Legacy: malla técnica del rig. Se normaliza a `head-only` al importar. */
+  | "mesh";
 
 /** Stage visual atmosphere / backdrop. */
 export type StageAtmosphere = "void" | "grid" | "spotlight";
@@ -117,6 +124,21 @@ export function lineVoiceParams(scene: Scene, line: SceneLine): {
   };
 }
 
+const BODY_STYLES = ["head-only", "anatomic", "ethereal", "mesh"] as const;
+const LEGACY_BODY_STYLES = new Set<string>(["anatomic", "ethereal", "mesh"]);
+
+/**
+ * Estilos legacy de escenas anteriores. Se aceptan al leer para no romper archivos guardados, pero
+ * nunca se conservan: la estética aprobada siempre se guarda como `head-only`.
+ */
+function normalizeBodyStyle(value: unknown, where: string): BodyStyle | undefined {
+  if (value === undefined) return undefined;
+  if (!BODY_STYLES.includes(value as (typeof BODY_STYLES)[number])) {
+    throw new Error(`${where}: estilo de cuerpo desconocido "${String(value)}". Opciones: head-only.`);
+  }
+  return LEGACY_BODY_STYLES.has(value as string) ? "head-only" : (value as BodyStyle);
+}
+
 /**
  * Validates untrusted parsed JSON data as a valid Scene.
  */
@@ -150,6 +172,7 @@ export function validateScene(data: unknown): Scene {
     if (!["male", "female", "child"].includes(c.body)) {
       throw new Error(`Cuerpo inválido "${String(c.body)}" en personaje "${c.id}". Opciones: male, female, child.`);
     }
+    c.bodyStyle = normalizeBodyStyle(c.bodyStyle, `Personaje "${c.id}"`);
   }
 
   if (!Array.isArray(d.events)) {
@@ -175,6 +198,8 @@ export function validateScene(data: unknown): Scene {
     }
   }
 
+  d.stageBodyStyle = normalizeBodyStyle(d.stageBodyStyle, "Escena");
+
   return d as Scene;
 }
 
@@ -184,7 +209,7 @@ export function validateScene(data: unknown): Scene {
 export const DIALOGUE_SCENE: Scene = {
   version: 1,
   title: "Diálogo: Aria & Dante",
-  stageBodyStyle: "anatomic",
+  stageBodyStyle: "head-only",
   stageAtmosphere: "void",
   characters: [
     {
@@ -211,13 +236,13 @@ export const DIALOGUE_SCENE: Scene = {
   events: [
     {
       characterId: "aria",
-      text: "Hola Dante. ¿Notás lo limpios que se ven ahora nuestros cuerpos de contorno?",
+      text: "Hola Dante. ¿Notás cómo se ve ahora la cabeza sola, sin cuerpo que la contornee?",
       posture: "curious",
     },
     { kind: "beat", label: "pausa reflexiva", durationS: 0.5 },
     {
       characterId: "dante",
-      text: "Totalmente. Los anillos del cuerpo continúan la misma anatomía que la cabeza.",
+      text: "Totalmente. La anatomía de la voz se ve limpia, sin anillos ni mallas alrededor.",
       posture: "agreement",
     },
     { kind: "beat", label: "pausa", durationS: 0.4 },
@@ -239,7 +264,7 @@ export const DIALOGUE_SCENE: Scene = {
 export const SOLILOQUY_SCENE: Scene = {
   version: 1,
   title: "Soliloquio: Aria",
-  stageBodyStyle: "anatomic",
+  stageBodyStyle: "head-only",
   stageAtmosphere: "spotlight",
   characters: [
     {
@@ -262,7 +287,7 @@ export const SOLILOQUY_SCENE: Scene = {
     { kind: "beat", label: "silencio", durationS: 0.5 },
     {
       characterId: "aria",
-      text: "Mi cuerpo y mi cabeza ahora comparten el mismo dibujo de contornos anatómicos.",
+      text: "Mi cabeza flota sin cuerpo; solo importa la anatomía de la voz.",
       posture: "curious",
     },
     { kind: "beat", label: "silencio", durationS: 0.4 },

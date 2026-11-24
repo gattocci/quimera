@@ -5,7 +5,7 @@ el motor de voz y su cabeza completa, incluido el tracto vocal animado y el lip-
 añade el escenario, el body rig posable y la orquestación de escenas.
 
 El prototipo actual incluye:
-- **Estética a medida**: opción de *Cabeza sola* (CHIMERA original limpio sin malla), *Silueta etérea* translúcida o *Malla de rig*.
+- **Estética aprobada por defecto**: cabeza anatómica en modo `vocal` con cuerpo `head-only` (cabeza sola, sin anillos ni malla). Los antiguos estilos (`anatomic`, `ethereal`, `mesh`) son legacy: no se muestran en la UI y se normalizan a `head-only` al importar un JSON.
 - **Estudio Creativo interactivo**: creador de personajes (voz, tono f0, dialecto, posición X, color) y editor de diálogo en tiempo real.
 - **Sentimientos y posturas**: réplicas con intención corporal (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).
 - **Cámara 3D libre**: órbita 360°, zoom hacia los órganos vocales y recentrado automático.
@@ -32,7 +32,7 @@ git submodule update --init --recursive
 ```
 
 Abre la URL que imprime Vite y pulsa **Hablar** (modo Libre) o **Reproducir escena** (modo Escena)
-para iniciar el audio. El prototipo muestra el body rig de CHIMERA con la cabeza 3D original encima.
+para iniciar el audio. El prototipo muestra la cabeza 3D original de CHIMERA flotando, sin cuerpo que la contornee.
 
 ## Estructura
 
