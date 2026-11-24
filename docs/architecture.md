@@ -45,15 +45,20 @@ El prototipo incluye:
   además el look que articula los labios desde los articuladores del motor.
 - **Cuerpo base + ropa** (`Character.layers` en `src/scene.ts`): el cuerpo base es deliberadamente
   mínimo. La ropa (`outfit`, `src/layers/outfit.ts`) es una "segunda piel" apenas desplazada a lo
-  largo de la normal del rig (`uOffset` ≈ 1,1 cm), dibujada con la misma familia de líneas finas,
-  translúcidas y de grosor en píxeles: silueta, bordes de prenda y pocas curvas verticales, sin
-  relleno ni anillos. El recorte usa las coordenadas de reposo (`aRest`: x delantero, y vertical,
-  z lateral), así que remera y pantalón siguen `body.turn` y los gestos sin deslizarse. El cuerpo
-  baja su alpha donde hay tela (`uClothMask`) para no duplicar trazos, y un guard en el cuello deja
-  la cara y el lip-sync intactos. `detail` (0..1) controla un único sistema de curvas, costuras y
-  pliegues; `seed` fija su fase entre recargas. El pelo (`src/layers/hair.ts`) queda de momento como
-  contrato y esquema (`short`/`long`, `length`) para el siguiente hito: no dibuja nada todavía.
-  Los JSON sin `layers` siguen funcionando como antes.
+  largo de la normal del rig (`uOffset` = 1,1 cm), dibujada con la misma familia de líneas finas y
+  de grosor en píxeles: silueta (`uAlpha` = 0,5), relleno gris translúcido (`uFill` = 0,18, reforzado
+  por el fresnel; 0 lo apaga) y bordes de prenda (`uEdgeAlpha` = 0,8). Sin `depthWrite`, para que la
+  tela no ocluya la cabeza. Los bordes horizontales (cuello, dobladillo, cintura, tobillo) ya no son
+  rectas: `clothCurvedY()` los curva con la normal en espacio del objeto y el flanco de la sección;
+  la cintura se atenúa a un tercio mientras el dobladillo real de la remera y el del pantalón siguen
+  brillantes. El recorte usa las coordenadas de reposo (`aRest`: x delantero, y vertical, z lateral),
+  así que remera y pantalón siguen `body.turn` y los gestos sin deslizarse. El cuerpo baja su alpha
+  donde hay tela (`uClothMask`) para no duplicar trazos, y un guard en el cuello deja la cara y el
+  lip-sync intactos. `detail` (0..1) controla un único sistema de curvas, costuras y pliegues;
+  `seed` fija su fase entre recargas. Solo en DEV, los parámetros de URL `clothFill`, `clothAlpha`,
+  `clothEdge` y `clothOffset` sobrescriben esos cuatro uniforms para ajustar sin recompilar.
+  El pelo (`src/layers/hair.ts`) queda de momento como contrato y esquema (`short`/`long`, `length`)
+  para el siguiente hito: no dibuja nada todavía. Los JSON sin `layers` siguen funcionando como antes.
 - **Estilos de cuerpo apartados**: `head-only` (solo la cabeza, sin cuerpo) queda en el esquema para
   escenas avanzadas y no se ofrece en la barra principal. `anatomic`, `ethereal` y `mesh` están
   marcados como `@deprecated`: `validateScene()` (`src/scene.ts`) los normaliza a `vocal` al importar,
@@ -69,8 +74,9 @@ El prototipo incluye:
 ### Reglas de las capas
 
 - Misma familia que la cabeza y el cuerpo: líneas finas y translúcidas, grosor constante en píxeles
-  (`fwidth`), sin superficies, mallas ni anillos repetidos. Las horizontales solo son bordes de
-  prenda (cuello, puños, dobladillos).
+  (`fwidth`), sin mallas ni anillos repetidos. La ropa añade un relleno translúcido apagable
+  (`uFill`), sin `depthWrite`. Las horizontales solo son bordes de prenda (cuello, puños,
+  dobladillos, cintura), curvas con la sección y nunca rectas.
 - La cabeza manda: ninguna capa tapa la cara ni la boca; el lip-sync sigue siendo el resultado de
   los articuladores de CHIMERA, no una animación propia de Quimera.
 - El código vive en `src/layers/`: `common.ts` (utilidades GLSL, regiones de recorte y ciclo de
