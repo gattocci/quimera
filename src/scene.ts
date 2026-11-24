@@ -3,7 +3,7 @@
  *
  * Capabilities:
  * - Full character customization (voice body, base pitch f0, dialect, accent color, stageX, bodyStyle,
- *   optional `layers` for outfit (rendered) and hair (schema only for now)).
+ *   optional `layers` for outfit and hair (both rendered)).
  * - Rich dialogue lines with posture/feeling hints and precise pause/beat timings.
  * - Global stage appearance:
  *     * bodyStyle: "vocal" (ghost silhouette + midline + sparse vertical contours), "head-only".
@@ -14,6 +14,7 @@
 import type { Lang, DialectPreset } from "@chimera/wasm/engine.ts";
 import type { BodyName } from "@chimera/wasm/../../src/worklet/protocol.ts";
 import { OUTFIT_TUNING_RANGES } from "./layers/outfitTuning.ts";
+import { HAIR_TUNING_RANGES } from "./layers/hairTuning.ts";
 
 // ──────────────────────────────────────────── types ──────────────────────────
 
@@ -44,8 +45,8 @@ export type StageAtmosphere = "void" | "grid" | "spotlight";
  * Capas agregadas sobre el cuerpo base. Comparten el lenguaje de la cabeza y el cuerpo: líneas
  * finas translúcidas, recortadas en coordenadas de reposo del rig (`aRest`).
  *
- * La ropa ya se dibuja (`src/layers/outfit.ts`); el pelo sigue siendo solo esquema hasta el
- * siguiente hito. Los JSON sin `layers` funcionan exactamente como antes.
+ * La ropa se dibuja en `src/layers/outfit.ts` y el pelo en `src/layers/hair.ts`. Los JSON sin
+ * `layers` funcionan exactamente como antes.
  */
 export type BodyLayerName = "hair" | "outfit";
 
@@ -80,11 +81,21 @@ export interface OutfitLayer extends BodyLayer {
   offset?: number;
 }
 
-/** Pelo corto o largo; `length` solo se usa en esta capa (renderer pendiente). */
+/** Pelo corto o largo, hecho de cintas de hebras finas sobre la malla de la cabeza. */
 export interface HairLayer extends BodyLayer {
   variant?: "short" | "long";
-  /** Longitud relativa, 0 a 1. Por defecto 0.5. */
+  /** Longitud relativa dentro de la variante, 0 a 1. Por defecto 0.5. */
   length?: number;
+  /** Barrido lateral sobre el hombro: −1 izquierda, 0 simétrico, +1 derecha. */
+  sweep?: number;
+  /** Alpha de cada hebra, 0 a 1. Por defecto 0.35. */
+  strandAlpha?: number;
+  /** Alpha del contorno del volumen, 0 a 1. Por defecto 0.7. */
+  contourAlpha?: number;
+  /** Alpha del tinte de masa por mechón, 0 a 0.3. Por defecto 0.08. */
+  bodyAlpha?: number;
+  /** Ganancia del balanceo por velocidad angular, 0 a 2. Por defecto 1. */
+  sway?: number;
 }
 
 export type CharacterLayers = {
@@ -110,7 +121,7 @@ export interface Character {
   stageX?: number;
   /** Custom body style per character (overrides scene default if set). */
   bodyStyle?: BodyStyle;
-  /** Capas agregadas sobre el cuerpo base (ropa renderizada; pelo en esquema). Opcional. */
+  /** Capas agregadas sobre el cuerpo base (ropa y pelo renderizados). Opcional. */
   layers?: CharacterLayers;
 }
 
@@ -265,10 +276,21 @@ function validateLayers(value: unknown, where: string): CharacterLayers | undefi
         throw new Error(`${where}: "hair.length" debe estar entre 0 y 1.`);
       }
       if (l.detail !== undefined) throw new Error(`${where}: "hair.detail" solo aplica a la capa de ropa.`);
+      const tuningKeys = ["density", "length", "sweep", "strandAlpha", "contourAlpha", "bodyAlpha", "sway"] as const;
+      const tuning: Partial<HairLayer> = {};
+      for (const key of tuningKeys) {
+        const value = l[key];
+        if (value === undefined) continue;
+        const { min, max } = HAIR_TUNING_RANGES[key];
+        if (typeof value !== "number" || !Number.isFinite(value) || value < min || value > max) {
+          throw new Error(`${where}: "hair.${key}" debe estar entre ${min} y ${max}.`);
+        }
+        (tuning as Record<string, number>)[key] = value;
+      }
       out.hair = {
         ...common,
         ...(l.variant !== undefined ? { variant: l.variant as "short" | "long" } : {}),
-        ...(l.length !== undefined ? { length: l.length as number } : {}),
+        ...tuning,
       };
     }
   }

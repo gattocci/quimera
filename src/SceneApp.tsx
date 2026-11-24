@@ -13,6 +13,7 @@ import {
   validateScene,
   type BodyStyle,
   type Character,
+  type HairLayer,
   type OutfitLayer,
   type PostureHint,
   type Scene,
@@ -30,6 +31,13 @@ import {
   setOutfitTuning,
   type OutfitTuningKey,
 } from "./layers/outfitTuning.ts";
+import {
+  HAIR_TUNING_RANGES,
+  getHairTuning,
+  resetHairTuning,
+  setHairTuning,
+  type HairNumericKey,
+} from "./layers/hairTuning.ts";
 
 type AppMode = "scene" | "studio" | "free";
 
@@ -40,6 +48,17 @@ const CLOTH_SLIDERS: Array<{ key: OutfitTuningKey; label: string; step: number }
   { key: "lineAlpha", label: "Líneas", step: 0.01 },
   { key: "backAlpha", label: "Revés", step: 0.01 },
   { key: "offset", label: "Offset cm", step: 0.05 },
+];
+
+/** Sliders del pelo: mismo orden que los rangos validados en `layers.hair`. */
+const HAIR_SLIDERS: Array<{ key: HairNumericKey; label: string; step: number }> = [
+  { key: "density", label: "Densidad", step: 0.01 },
+  { key: "length", label: "Largo", step: 0.01 },
+  { key: "sweep", label: "Barrido", step: 0.01 },
+  { key: "strandAlpha", label: "Hebras", step: 0.01 },
+  { key: "contourAlpha", label: "Contorno", step: 0.01 },
+  { key: "bodyAlpha", label: "Masa", step: 0.01 },
+  { key: "sway", label: "Balanceo", step: 0.02 },
 ];
 
 export function SceneApp() {
@@ -233,6 +252,48 @@ export function SceneApp() {
       lineAlpha: d.lineAlpha,
       backAlpha: d.backAlpha,
       offset: d.offset,
+    });
+  };
+
+  /** Activa/desactiva el pelo de un personaje o cambia su variante, sin tocar la ropa. */
+  const updateHair = (ch: Character, patch: Partial<HairLayer> | null) => {
+    const layers = { ...(ch.layers ?? {}) };
+    if (patch === null) {
+      delete layers.hair;
+    } else {
+      layers.hair = {
+        variant: "long",
+        seed: seedFromId(ch.id),
+        ...(layers.hair ?? {}),
+        ...patch,
+      };
+    }
+    updateCharacter(ch.id, { layers });
+  };
+
+  /** Ajuste numérico del pelo: store ligero para el frame y JSON para persistir. */
+  const tuneHair = (ch: Character, key: HairNumericKey, value: number) => {
+    setHairTuning(ch.id, { [key]: value });
+    updateHair(ch, { [key]: value } as Partial<HairLayer>);
+  };
+
+  const tuneHairColor = (ch: Character, value: string) => {
+    setHairTuning(ch.id, { color: value });
+    updateHair(ch, { color: value });
+  };
+
+  /** Vuelve al color y a los ajustes por defecto (sembrados desde la escena si los trae). */
+  const resetHairStyle = (ch: Character) => {
+    const d = resetHairTuning(ch.id);
+    updateHair(ch, {
+      density: d.density,
+      length: d.length,
+      sweep: d.sweep,
+      strandAlpha: d.strandAlpha,
+      contourAlpha: d.contourAlpha,
+      bodyAlpha: d.bodyAlpha,
+      sway: d.sway,
+      color: d.color,
     });
   };
 
@@ -769,6 +830,66 @@ export function SceneApp() {
                               </button>
                             </details>
                           </>
+                        )}
+                      </div>
+
+                      <div className="quimera-char-card-row">
+                        <label className="quimera-field">
+                          Pelo
+                          <select
+                            value={!ch.layers?.hair ? "none" : ch.layers.hair.variant ?? "long"}
+                            onChange={(e) =>
+                              updateHair(
+                                ch,
+                                e.target.value === "none"
+                                  ? null
+                                  : { variant: e.target.value as "short" | "long" }
+                              )
+                            }
+                          >
+                            <option value="none">ninguno</option>
+                            <option value="short">corto</option>
+                            <option value="long">largo</option>
+                          </select>
+                        </label>
+                        {ch.layers?.hair && (
+                          <details className="quimera-cloth-panel">
+                            <summary>Pelo · ajustes</summary>
+                            <div className="quimera-cloth-grid">
+                              {HAIR_SLIDERS.map(({ key, label, step }) => {
+                                const { min, max } = HAIR_TUNING_RANGES[key];
+                                const value = getHairTuning(ch.id)[key];
+                                return (
+                                  <label className="quimera-field" key={key}>
+                                    {label} <output>{value.toFixed(2)}</output>
+                                    <input
+                                      type="range"
+                                      min={min}
+                                      max={max}
+                                      step={step}
+                                      value={value}
+                                      onChange={(e) => tuneHair(ch, key, Number(e.target.value))}
+                                    />
+                                  </label>
+                                );
+                              })}
+                              <label className="quimera-field quimera-field-color">
+                                Color
+                                <input
+                                  type="color"
+                                  value={getHairTuning(ch.id).color}
+                                  onChange={(e) => tuneHairColor(ch, e.target.value)}
+                                />
+                              </label>
+                            </div>
+                            <button
+                              type="button"
+                              className="quimera-btn-small"
+                              onClick={() => resetHairStyle(ch)}
+                            >
+                              Restablecer
+                            </button>
+                          </details>
                         )}
                       </div>
                     </div>

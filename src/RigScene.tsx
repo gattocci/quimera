@@ -8,7 +8,7 @@
  *        a few sparse vertical contour curves (a bright warm midline, like the cut through the head)
  *        so it reads when the camera orbits. No grid, no fill, no rings; cut at the neck rim so the
  *        face stays clean. It is the base layer: a gray tee + pants (Character.layers.outfit) sits
- *        on top; hair is reserved for the next stage.
+ *        on top; hair (Character.layers.hair) draws light strands over the CHIMERA scalp.
  *      * "head-only": pure CHIMERA standalone head, no body at all (advanced scenes).
  *   Legacy body styles are normalized to "vocal" by validateScene() and render as "vocal" here.
  *  - The approved presentation is head look "vocal": the CHIMERA anatomical head with its lips
@@ -27,15 +27,21 @@ import { engine } from "@chimera/audio/AudioEngine.ts";
 import { useStore } from "@chimera/ui/store.ts";
 import type { BodyStyle, Character, PostureHint } from "./scene.ts";
 import { POSTURE_PRESETS, listeningPose, lerpPose, clonePose } from "./poses.ts";
-import { CLOTH_REGION_GLSL, type LayerHandle } from "./layers/common.ts";
+import { CLOTH_REGION_GLSL } from "./layers/common.ts";
 import { createOutfitLayer, type OutfitLayerHandle, type OutfitSpec } from "./layers/outfit.ts";
+import {
+  getHairTuning,
+  resetHairTuning,
+  setHairTuning,
+  type HairTuning,
+} from "./layers/hairTuning.ts";
 import {
   getOutfitTuning,
   resetOutfitTuning,
   setOutfitTuning,
   type OutfitTuning,
 } from "./layers/outfitTuning.ts";
-import { createHairLayer, type HairSpec } from "./layers/hair.ts";
+import { createHairLayer, type HairLayerHandle, type HairSpec } from "./layers/hair.ts";
 import type { Pose } from "@chimera/rig/pose.ts";
 
 export type HeadLookName = "classic" | "vocal" | "skinned" | "outside";
@@ -64,7 +70,7 @@ interface PerformerInstance {
   vocalMat: THREE.ShaderMaterial;
   vocalBackMat: THREE.ShaderMaterial;
   outfit: OutfitLayerHandle;
-  hair: LayerHandle;
+  hair: HairLayerHandle;
   outfitSpec?: OutfitSpec;
   hairEnabled: boolean;
   layerSignature: string;
@@ -282,7 +288,6 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           stageX: c.stageX,
           bodyStyle: c.bodyStyle,
           layers: {
-            hair: c.layers?.hair,
             outfit: c.layers?.outfit && {
               variant: c.layers.outfit.variant,
               enabled: c.layers.outfit.enabled,
@@ -322,6 +327,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       p.outfitSpec = ch.layers?.outfit;
       p.hairEnabled = !!ch.layers?.hair && ch.layers.hair.enabled !== false;
       p.outfit.setSpec(p.outfitSpec);
+      p.hair.setSpec(ch.layers?.hair as HairSpec | undefined);
 
       // El JSON de la escena siembra el store del panel; el panel escribe en ambos sitios, así que
       // al arrastrar un slider este valor coincide con el que ya se aplicó en el frame anterior.
@@ -337,6 +343,19 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       }
       if (hasTuning) setOutfitTuning(p.id, patch);
       else resetOutfitTuning(p.id);
+
+      const hair = ch.layers?.hair;
+      const hairPatch: Partial<HairTuning> = {};
+      let hasHairTuning = false;
+      for (const key of ["density", "length", "sweep", "strandAlpha", "contourAlpha", "bodyAlpha", "sway", "color"] as const) {
+        const value = hair?.[key];
+        if (value !== undefined) {
+          (hairPatch as Record<string, unknown>)[key] = value;
+          hasHairTuning = true;
+        }
+      }
+      if (hasHairTuning) setHairTuning(p.id, hairPatch);
+      else resetHairTuning(p.id);
 
       syncLayerVisibility(p);
     };
@@ -454,7 +473,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           frontMesh.geometry as THREE.BufferGeometry,
           ch.layers?.outfit as OutfitSpec | undefined
         );
-        const hair = createHairLayer(group, ch.layers?.hair as HairSpec | undefined);
+        const hair = createHairLayer(group, rig, ch.id, ch.layers?.hair as HairSpec | undefined);
 
         const initialPose = clonePose(POSTURE_PRESETS.neutral);
         initialPose.body.turn = baseTurn;
@@ -532,8 +551,9 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           const p = performers[i];
           const chNow = charactersRef.current[i];
           if (chNow) syncLayers(p, chNow);
-          // Uniforms en vivo: nunca reconstruye la escena, solo escribe cinco floats por material.
+          // Uniforms en vivo: nunca reconstruye la escena; el pelo solo reescribe su geometría.
           p.outfit.setTuning(getOutfitTuning(p.id));
+          p.hair.setTuning(getHairTuning(p.id));
           const isCurrentSpeaker = hasSpeaker && p.id === activeId;
           const isSolo = performers.length === 1;
 
@@ -582,6 +602,7 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           p.head.update(camera, artic, tele, dt);
           p.head.face(p.skinned, p.view.posed);
           p.view.update();
+          p.hair.update(p.skinned, dt, breathT);
         }
 
         // Los bounds ya están actualizados por el primer frame (el view rellena su geometría aquí).

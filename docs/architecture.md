@@ -70,15 +70,15 @@ El prototipo incluye:
   persiste en `layers.outfit` (`fill`, `edgeGain`, `lineAlpha`, `backAlpha`, `offset`) y
   `validateScene()` los valida con rangos. En DEV, los parámetros de URL `clothSolid`, `clothFill`,
   `clothEdgeGain`, `clothAlpha`, `clothBackAlpha`, `clothEdge`, `clothOffset`, `shirtColor` y
-  `pantsColor` siembran esos defaults (hex de seis dígitos, con o sin `#`, con fallback). El pelo
-  (`src/layers/hair.ts`) comparte el lenguaje de luz; hoy no dibuja nada. Los JSON sin `layers`
-  siguen funcionando como antes.
+  `pantsColor` siembran esos defaults (hex de seis dígitos, con o sin `#`, con fallback). Los JSON
+  sin `layers` siguen funcionando como antes.
+- **Pelo sobre la cabeza** (`Character.layers.hair`, `src/layers/hair.ts`): mismo lenguaje de luz, sin malla, sin visemas y sin tocar la cabeza. Construcción de 40–90 mechones, cada cinta de 8–40 hebras (320–3600 hebras según `density`), 4 líneas de contorno (arco de nacimiento, dos laterales y nuca) y una cinta central por mechón teñida con `uBodyAlpha` = 0,08 para dar masa sin relleno plano. Todo sale en **un solo `LineSegments`** por personaje: buffers reservados al máximo y atributos por vértice (`aAlpha`, `aPhase`, `aStrand`); cambiar density solo mueve el `drawRange` y pone a cero el alpha de lo inactivo, sin reconstruir la geometría. Las raíces se eligen al crear la capa sobre la malla que `wearHead()` añade al rig: `y` 78..94 cm y `|atan2(z, x-3)| >= 0,75` (x delantero, y vertical, z lateral) dejan fuera la frente, ojos, nariz, boca y mandíbula, y se prioriza el tono atenuado del cuero cabelludo (`rig.tone` ≈ 0,22). Con los tres presets del rig hay 185–217 vértices candidatos (female 201, male 217, child 185), más que suficientes para los 90 mechones; se comprueba que ningún candidato queda en el cono delantero. Cada frame se generan 8 puntos por hebra desde el vértice skinneado de su raíz y la rotación del hueso `head`: salida radial sobre el cráneo, gravedad, longitudes mezcladas (más largas en nuca, más cortas en coronilla) y separación de 1 cm de cápsulas ancladas a torso, cuello, clavículas y brazos. El balanceo es por mechón, con fase propia y amplitud creciente hacia la punta, inducido por la velocidad angular de `head` y `hips`; no hay física por hebra. `short` usa 8..22 cm de base y `long` 26..66 cm, con `length` 0..1. Color por defecto `#e6cf9a`, hebras a alpha 0,35 con caída del 70 % hacia la punta, contorno `#f3e2b8` a 0,7 y bandas de brillo por mechón de ±25 %. El generador es `mulberry32(seed + 7*hash(id) + 17)`. El panel «Pelo · ajustes» (7 sliders, color y «Restablecer») escribe en el store sin React `hairTuning.ts`, del que `RigScene` lee cada frame, y persiste en `layers.hair`; `validateScene()` valida todos sus rangos. Sin `layers.hair` no se crea la capa ni se dibuja nada.
 - **Estilos de cuerpo apartados**: `head-only` (solo la cabeza, sin cuerpo) queda en el esquema para
   escenas avanzadas y no se ofrece en la barra principal. `anatomic`, `ethereal` y `mesh` están
   marcados como `@deprecated`: `validateScene()` (`src/scene.ts`) los normaliza a `vocal` al importar,
   así que un JSON antiguo no puede reactivar los anillos ni la malla completa que se rechazaron.
 - **Estudio Creativo integrado** (`src/SceneApp.tsx`):
-  - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario, color de acento y ropa (`ninguna` / `remera + pantalón`) con su slider de detalle y el panel plegable «Vidrio · ajustes» (relleno, borde, líneas, revés, offset y botón «Restablecer»).
+  - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario, color de acento, ropa (`ninguna` / `remera + pantalón`) con su slider de detalle y el panel plegable «Vidrio · ajustes» (relleno, borde, líneas, revés, offset y botón «Restablecer»), y pelo (`ninguno` / `corto` / `largo`) con el panel «Pelo · ajustes» (densidad, largo, barrido, hebras, contorno, masa, balanceo, color y «Restablecer»).
   - *Editor de guiones y sentimientos*: agregar, editar, reordenar y eliminar líneas y pausas; asignación de actitudes por réplica (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).
 - **Atmósferas escénicas**: modos *Vacío* (negro profundo de alto contraste), *Rejilla* (cibernético) y *Foco* (iluminación cenital).
 - **Cámara interactiva** (`OrbitControls`): rotación 360°, zoom hacia los órganos vocales y recentrado con un clic.
@@ -96,13 +96,37 @@ El prototipo incluye:
   los articuladores de CHIMERA, no una animación propia de Quimera.
 - El código vive en `src/layers/`: `common.ts` (utilidades GLSL, regiones de recorte y ciclo de
   vida), `outfit.ts` (ropa), `outfitTuning.ts` (store ligero del panel, compartido con `scene.ts`
-  para los rangos) y `hair.ts` (contrato del hito siguiente). `RigScene.tsx` solo monta las capas,
-  actualiza uniforms y libera materiales y meshes al desmontarse; la geometría es la del rig y la
-  libera `RigView`. El efecto de montaje depende de una clave estructural que excluye los ajustes
-  del vidrio, así que mover un slider no reconstruye la escena.
+  para los rangos) y `hair.ts` + `hairTuning.ts` (pelo y su store ligero). `RigScene.tsx` solo monta
+  las capas, actualiza uniforms y libera materiales y meshes al desmontarse; la geometría del cuerpo
+  es la del rig y la libera `RigView`, mientras que el pelo posee su propio `LineSegments`. El efecto
+  de montaje depende de una clave estructural que excluye los ajustes del vidrio y del pelo, así que
+  mover un slider no reconstruye la escena.
 - `validateScene()` valida por capa `enabled`, `color`, `material`, `density` y `seed`, además de
   `detail` y los cinco ajustes del vidrio (`fill`, `edgeGain`, `lineAlpha`, `backAlpha`, `offset`)
-  en la ropa y `length` en el pelo, con mensajes de error en español.
+  en la ropa y, en el pelo, `variant` (`short`/`long`) junto con `density`, `length`, `sweep`,
+  `strandAlpha`, `contourAlpha`, `bodyAlpha` y `sway` según `HAIR_TUNING_RANGES`, con mensajes de
+  error en español.
+
+### Coste medido del pelo y pendientes
+
+Benchmark sintético del bucle de actualización (Bun, rig de 2915 vértices de cuerpo + 90 mechones,
+120 frames por caso, sin render GPU): 0,379 ms/frame/personaje con `density` 0 (23.016 vértices
+dibujados), 0,624 ms con 0,5 (37.366) y 0,871 ms con 1 (51.716). Dos personajes ≈ 0,8–1,7
+ms/frame solo de CPU; el buffer es de 51.716 vértices por personaje. La primera versión con 38–55
+hebras por mechón costaba 0,45–0,90 ms y reservaba 70.616 vértices; se cambió a 8–40 hebras para
+cumplir el rango literal por cinta. Ese rango, combinado con 40–90 mechones, da 320–3600 hebras
+totales: no puede alcanzar simultáneamente el objetivo de 1500–5000 hebras, así que se priorizó el
+rango por mechón y se mantuvo el coste por debajo del presupuesto implícito. La densidad 0,5 usa
+65 mechones × 24 hebras = 1560 hebras, dentro del objetivo para el valor por defecto.
+
+Supuestos: el jitter de 0,1–0,4 cm de la primera versión se amplió a 0,4–1,0 cm para que una cinta
+de 8–40 hebras conserve anchura visible; se deja fijo en el marco del cuerpo (no gira con la
+cabeza) porque su coste es despreciable. Los 4 contornos no dependen de la densidad. Las raíces
+se validaron en reposo con los tres presets del rig real, con 185–217 candidatos y ninguno en el
+cono delantero; **no se ha probado visualmente en navegador ni con voz**, así que no se afirma que
+el pelo no titila a 1 px, no penetra cuello/hombros en movimientos extremos ni tapa la boca en
+lip-sync. Queda pendiente un prepass de profundidad opcional para el pelo, como el de la ropa, si
+las pruebas visuales muestran que las líneas atraviesan la cabeza.
 
 ## Dependencia fijada
 
