@@ -52,8 +52,10 @@ export type BodyLayerName = "hair" | "outfit";
 export interface BodyLayer {
   /** Si es false la capa existe pero no se dibuja. Por defecto true. */
   enabled?: boolean;
-  /** Color en hex; si falta, la ropa usa un gris neutro y el pelo usará el color del personaje. */
+  /** Color en hex; si falta, la ropa usa su gris azulado y el pelo usará el color del personaje. */
   color?: string;
+  /** Acabado de la capa: `glass` (vidrio emisivo, por defecto) o `solid` (mate opaco). */
+  material?: "glass" | "solid";
   /** Densidad relativa de líneas, 0 a 1 (por defecto 0.5; reservado para el pelo). */
   density?: number;
   /** Misma seed = mismo resultado entre recargas (fase de pliegues en la ropa). */
@@ -199,6 +201,12 @@ function validateLayers(value: unknown, where: string): CharacterLayers | undefi
         throw new Error(`${where}: "${name}.color" debe ser un hex tipo #4fb6f2.`);
       }
       common.color = l.color;
+    }
+    if (l.material !== undefined) {
+      if (l.material !== "glass" && l.material !== "solid") {
+        throw new Error(`${where}: "${name}.material" debe ser "glass" o "solid".`);
+      }
+      common.material = l.material;
     }
     if (l.density !== undefined) {
       if (typeof l.density !== "number" || l.density < 0 || l.density > 1) {

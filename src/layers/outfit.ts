@@ -1,17 +1,19 @@
 /**
- * Capa de ropa sobre el cuerpo base: remera y pantalón como MATERIA, no como vidrio.
+ * Capa de ropa sobre el cuerpo base: vidrio emisivo por defecto, mate opaco como opción.
  *
- * El cuerpo y la cabeza son luz (holograma de línea fina); la tela es una superficie mate que
- * tapa lo que hay debajo solo en la sección cubierta. Para eso se dibuja en dos pases:
- *   1) relleno opaco (depthWrite), que oculta al cuerpo holográfico sin tocar su shader;
- *   2) líneas transparentes (sin depthWrite, 0,05 cm por encima) para bordes, curvas y costuras.
+ * Cabeza, cuerpo y pelo son LUZ; la ropa también emite. La tela no es plástico: es un cristal con
+ * borde luminoso que tapa el cuerpo holográfico que queda detrás. Para separar OCULTAR de DIBUJAR:
+ *   1) prepass de profundidad: mismo casco, `colorWrite: false`, `depthWrite: true`, antes del cuerpo;
+ *   2) pase visible de vidrio: transparente, sin `depthWrite`, `depthFunc: LessEqual`, solo caras
+ *      frontales (el prepass ya esconde las traseras);
+ *   3) pase mate opaco: solo cuando `material: "solid"` (o `?clothSolid=1` en desarrollo).
  *
- * El recorte sigue anclado a `aRest` y usa las mismas regiones que el cuerpo; la malla es la del
- * rig, así que la ropa sigue `body.turn` y los gestos sin deslizarse.
+ * El recorte sigue anclado a `aRest` y usa las regiones del rigor; la malla es la del rig, así que
+ * la ropa sigue `body.turn` y los gestos sin deslizarse.
  *
  * En desarrollo se pueden ajustar los valores sin recompilar:
- *   ?clothSolid=1&clothFill=0.18&clothAlpha=0.5&clothEdge=0.8&clothOffset=1.1
- *   &shirtColor=6c737a&pantsColor=3c4249
+ *   ?clothSolid=0&clothFill=0.22&clothAlpha=0.5&clothEdge=0.85&clothOffset=1.1
+ *   &shirtColor=aeb9c3&pantsColor=66737f
  */
 
 import * as THREE from "three";
@@ -42,15 +44,15 @@ void main() {
 }
 `;
 
-/** Preludio compartido por los dos pases: uniforms, regiones y cobertura extendida. */
+/** Preludio compartido: uniforms, regiones y la cobertura de render (extends regiones, no las cambia). */
 const OUTFIT_COMMON = /* glsl */ `
 uniform vec3 uColor;
 uniform vec3 uEdgeColor;
 uniform vec3 uHaloColor;
-uniform float uAlpha;     // trazo (silueta, curvas, costuras)
-uniform float uFill;      // relleno del estilo vidrio; 0 lo apaga
-uniform float uEdgeAlpha; // bordes de prenda, claros sobre la tela
-uniform float uSolid;     // 0 = vidrio translúcido, 1 = mate opaco
+uniform float uAlpha;     // trazo de curvas, costuras y pliegues
+uniform float uFill;      // alpha del vidrio en el centro; sube con el fresnel
+uniform float uEdgeAlpha; // bordes de prenda, luminosos
+uniform float uSolid;     // 0 = vidrio, 1 = mate opaco
 uniform float uBack;
 uniform float uDetail;
 uniform float uSeed;
@@ -70,33 +72,55 @@ float clothCurvedY(vec3 r, vec3 nObj, float baseY) {
   return baseY + 0.8 * flank + 0.4 * clamp(nObj.y, -1.0, 1.0);
 }
 
-// Cobertura de render, sin tocar los umbrales compartidos: rellena la entrepierna (el hueco
-// tipo calzoncillo) y el costado de la axila / cadera donde la silueta se quedaba corta.
+// Cobertura de render. CLOTH_REGION_GLSL queda intacto: aquí solo se cierran los huecos vistos en
+// el rig (hombro, pantorrilla, entrepierna y costado) para que no aparezca el cuerpo debajo.
 float outfitCoverageOut(vec3 r) {
   if (uGarment < 0.5) {
     float top = 1.0 - smoothstep(clothNeckY(r) - CLOTH_FEATHER, clothNeckY(r) + CLOTH_FEATHER, r.y);
     float hem = smoothstep(CLOTH_HIP_Y - CLOTH_FEATHER, CLOTH_HIP_Y + CLOTH_FEATHER, r.y);
     float guard = 1.0 - smoothstep(62.0, 65.0, r.y);
+    // Costado de axila / cadera.
     float side = (1.0 - smoothstep(CLOTH_TORSO_Z + 1.0, CLOTH_TORSO_Z + 4.0, abs(r.z))) * top * hem * guard;
-    return max(clothShirtMask(r), side);
+    // El recorte de manga se apagaba en y = 55..59 mientras el torso ya se cortaba en |z| ≈ 17:
+    // entre 17 y 23 cm de lateral y y ≈ 58..61 no cubría nada (parche del hombro).
+    float shoulder = smoothstep(29.0, 32.0, r.y) * (1.0 - smoothstep(60.0, 64.0, r.y))
+                   * smoothstep(9.5, 12.0, abs(r.z))
+                   * (1.0 - smoothstep(CLOTH_SLEEVE_Z + 1.0, CLOTH_SLEEVE_Z + 3.0, abs(r.z)))
+                   * guard;
+    return max(max(clothShirtMask(r), side), shoulder);
   }
   float top = 1.0 - smoothstep(CLOTH_WAIST_Y - CLOTH_FEATHER, CLOTH_WAIST_Y + CLOTH_FEATHER, r.y);
   float hem = smoothstep(CLOTH_ANKLE_Y - CLOTH_FEATHER, CLOTH_ANKLE_Y + CLOTH_FEATHER, r.y);
   float width = 23.0 - 2.5 * smoothstep(CLOTH_ANKLE_Y, CLOTH_WAIST_Y, r.y);
-  float outer = 1.0 - smoothstep(width - CLOTH_FEATHER, width + CLOTH_FEATHER, abs(r.z));
-  // Sin la hendidura interior: deltoides de pierna arriba, se abre hacia media pierna.
+  // El ancho compartido se quedaba corto en la pantorrilla (|z| ≈ 23, y ≈ -45..-54). Ensanchar el
+  // borde exterior sin borrar la hendidura interior mantiene las piernas separadas.
+  float inner = 7.0 * (1.0 - smoothstep(0.0, 10.0, r.y));
+  float inseam = smoothstep(inner - CLOTH_FEATHER, inner + CLOTH_FEATHER, abs(r.z));
+  float outer = 1.0 - smoothstep(width + 2.5 - CLOTH_FEATHER, width + 2.5 + CLOTH_FEATHER, abs(r.z));
+  float legSide = top * hem * inseam * outer;
+  // Relleno del deltoides entre piernas: arriba se cierra, se abre hacia media pierna.
   float bridge = smoothstep(-34.0, -18.0, r.y);
-  return max(clothPantsMask(r), top * hem * outer * bridge);
+  return max(max(clothPantsMask(r), legSide), top * hem * outer * bridge);
 }
 `;
 
-/** Pase 1: superficie mate opaca. Con uSolid = 0 no dibuja nada y deja paso al vidrio. */
-const OUTFIT_FILL_FRAG = /* glsl */ `
+/** Prepass: solo escribe profundidad para ocultar el cuerpo detrás de la tela. */
+const OUTFIT_DEPTH_FRAG = /* glsl */ `
+${OUTFIT_COMMON}
+
+void main() {
+  if (outfitCoverageOut(vRest) < 0.5) discard;
+  gl_FragColor = vec4(0.0); // colorWrite está desactivado
+}
+`;
+
+/** Pase mate opaco, reservado a `material: "solid"`. */
+const OUTFIT_SOLID_FRAG = /* glsl */ `
 ${OUTFIT_COMMON}
 
 void main() {
   float mask = outfitCoverageOut(vRest);
-  if (mask < 0.5 || uSolid < 0.01) discard;
+  if (mask < 0.5) discard;
 
   vec3 n = normalize(vN), v = normalize(vV);
   float facing = abs(dot(n, v));
@@ -105,15 +129,13 @@ void main() {
   float fresnel = pow(1.0 - facing, 2.2);
   float shade = 0.35 + 0.5 * diffuse + 0.12 * fresnel;
   vec3 matte = uColor * shade;
-  // Halo azul muy tenue en la silueta: mismo azul de línea del cuerpo, intensidad 0.25.
   matte += uHaloColor * 0.25 * pow(1.0 - facing, 4.0);
-  matte *= uBack > 0.5 ? 0.75 : 1.0;
   gl_FragColor = vec4(layerEncode(matte), 1.0);
 }
 `;
 
-/** Pase 2: trazo transparente sobre la tela; con uSolid = 0 recupera el relleno de vidrio. */
-const OUTFIT_LINE_FRAG = /* glsl */ `
+/** Pase visible: vidrio emisivo + trazo. Con uSolid = 1 el relleno se apaga y quedan las líneas. */
+const OUTFIT_GLASS_FRAG = /* glsl */ `
 ${OUTFIT_COMMON}
 
 void main() {
@@ -123,19 +145,22 @@ void main() {
   vec3 n = normalize(vN), v = normalize(vV);
   float facing = abs(dot(n, v));
   float outline = 1.0 - smoothstep(0.07, 0.24, facing);
-  float halo = pow(1.0 - facing, 2.6);
+  float halo = pow(1.0 - facing, 2.6); // fresnel suave
 
-  // Bordes reales de la prenda: cuello, manga, dobladillo de la remera y tobillo del pantalón.
-  // La cintura ya no se dibuja: con tela opaca parecía un cinturón.
+  // Bordes reales de la prenda: cuello, puño, dobladillo de la remera y tobillo del pantalón.
+  // La cintura sigue sin dibujarse como cinturón.
   float brightEdge = 0.0;
   if (uGarment < 0.5) {
-    // El escote ya curva por clothNeckY (más bajo adelante); no lo subimos hacia la mandíbula.
+    // Escote: ya curva por clothNeckY (más bajo adelante); no lo subimos hacia la mandíbula.
     float neckline = lineAt(vRest.y - clothNeckY(vRest))
                    * smoothstep(50.0, 56.0, vRest.y);
     float hem = lineAt(vRest.y - clothCurvedY(vRest, vLocalN, CLOTH_HIP_Y))
               * (1.0 - smoothstep(17.0, 20.0, abs(vRest.z)));
+    // Puño: anillo cerrado en |z| = CLOTH_SLEEVE_Z (perpendicular al eje del brazo en A-pose).
+    // Antes se recortaba en y = 32..50 y parecía un corte seco; ahora envuelve todo el bíceps.
+    float armR = length(vec2(vRest.x - 2.0, vRest.y - 42.0));
     float cuff = lineAt(abs(vRest.z) - CLOTH_SLEEVE_Z)
-               * smoothstep(20.0, 32.0, vRest.y) * (1.0 - smoothstep(50.0, 58.0, vRest.y));
+               * smoothstep(4.0, 6.0, armR) * (1.0 - smoothstep(9.0, 11.0, armR));
     brightEdge = max(max(neckline, hem), cuff);
   } else {
     float ankle = lineAt(vRest.y - clothCurvedY(vRest, vLocalN, CLOTH_ANKLE_Y))
@@ -173,17 +198,18 @@ void main() {
   float folds = layerSlice(abs(vRest.z) + 1.4 * sin(0.22 * vRest.y + phase), 9.0)
               * (1.0 - smoothstep(16.0, 34.0, abs(vRest.y - hemY))) * frontBack;
 
-  float glassAlpha = uFill * mask * (0.4 + 0.6 * halo) * (1.0 - uSolid);
+  // Cristal: uFill = 0.22 en el centro y ≈ 0.50 en la silueta (fresnel).
+  float glassAlpha = uFill * mask * (1.0 + 1.27 * halo) * (1.0 - uSolid);
   float lineAlpha = uAlpha * mask * (outline * 0.85 + halo * 0.12
-                  + curves * tCurve * 0.42 + seam * tSeam * 0.5 + folds * tFold * 0.22);
+                  + curves * tCurve * 0.7 + seam * tSeam * 0.7 + folds * tFold * 0.6);
   float edgeAlpha = uEdgeAlpha * brightEdge;
   float backFactor = uBack > 0.5 ? 0.32 : 1.0;
   float alpha = clamp((glassAlpha + lineAlpha + edgeAlpha) * backFactor, 0.0, 1.0);
   if (alpha < 0.006) discard;
 
-  vec3 lineCol = mix(uColor * 1.5, uEdgeColor, brightEdge);
-  lineCol += uHaloColor * 0.08 * halo;
-  gl_FragColor = vec4(layerEncode(lineCol), alpha);
+  vec3 col = mix(uColor, uEdgeColor, brightEdge * 0.85);
+  col += uHaloColor * 0.30 * halo;
+  gl_FragColor = vec4(layerEncode(col), alpha);
 }
 `;
 
@@ -192,6 +218,8 @@ export interface OutfitSpec {
   variant?: "tee-pants";
   enabled?: boolean;
   color?: string;
+  /** Vidrio emisivo (por defecto) o mate opaco. */
+  material?: "glass" | "solid";
   /** 0 = solo silueta y bordes; 0.5 = + curvas; 1 = + costuras y pliegues. */
   detail?: number;
   /** Semilla determinista para la fase de los pliegues. */
@@ -205,19 +233,19 @@ export interface OutfitLayerHandle extends LayerHandle {
 
 /** Valores finales de la prenda; en producción se usan siempre estos. */
 const OUTFIT_TUNING = {
-  solid: 1,
-  fill: 0.18,
+  solid: 0,
+  fill: 0.22,
   alpha: 0.5,
-  edge: 0.8,
+  edge: 0.85,
   offset: 1.1,
-  shirtColor: "#6c737a",
-  pantsColor: "#3c4249",
+  shirtColor: "#aeb9c3",
+  pantsColor: "#66737f",
 };
 
 /** Azul de línea del cuerpo, en luz lineal (CHIMERA_LOOK.line). */
 const HALO_LINEAR = new THREE.Vector3(0.06, 0.36, 0.68);
-/** Blanco cálido de los bordes de prenda, en luz lineal (#b8c0c8). */
-const EDGE_LINEAR = hexToLinear("#b8c0c8");
+/** Borde luminoso de la prenda, en luz lineal (#d0d8df). */
+const EDGE_LINEAR = hexToLinear("#d0d8df");
 
 /**
  * Solo en desarrollo. Los colores se aceptan con o sin `#` y con seis dígitos hexadecimales;
@@ -250,18 +278,14 @@ function devTuning(): typeof OUTFIT_TUNING {
 const TUNING = devTuning();
 
 type Garment = "shirt" | "pants";
-type Pass = "fill" | "line";
+type Pass = "depth" | "solid" | "glass";
 
-function makeMaterial(
-  garment: Garment,
-  pass: Pass,
-  color: string,
-  back: boolean
-): THREE.ShaderMaterial {
-  const solidFill = pass === "fill";
+function makeMaterial(garment: Garment, pass: Pass, color: string): THREE.ShaderMaterial {
+  const isDepth = pass === "depth";
+  const isSolid = pass === "solid";
   return new THREE.ShaderMaterial({
     vertexShader: OUTFIT_VERT,
-    fragmentShader: solidFill ? OUTFIT_FILL_FRAG : OUTFIT_LINE_FRAG,
+    fragmentShader: isDepth ? OUTFIT_DEPTH_FRAG : isSolid ? OUTFIT_SOLID_FRAG : OUTFIT_GLASS_FRAG,
     uniforms: {
       uColor: { value: hexToLinear(color) },
       uEdgeColor: { value: EDGE_LINEAR.clone() },
@@ -270,18 +294,24 @@ function makeMaterial(
       uFill: { value: TUNING.fill },
       uEdgeAlpha: { value: TUNING.edge },
       uSolid: { value: TUNING.solid },
-      uBack: { value: back ? 1 : 0 },
+      uBack: { value: 0 },
       uDetail: { value: 0.5 },
       uSeed: { value: 0 },
       uGarment: { value: garment === "shirt" ? 0 : 1 },
       uPx: { value: 1.4 },
-      // Las líneas van 0,05 cm por encima de la tela para no pelear con su depth.
-      uOffset: { value: TUNING.offset + (solidFill ? 0 : 0.05) },
+      uOffset: { value: TUNING.offset },
     },
-    transparent: !solidFill,
-    side: back ? THREE.BackSide : THREE.FrontSide,
-    depthWrite: solidFill,
+    transparent: pass === "glass",
+    side: THREE.FrontSide,
+    colorWrite: !isDepth,
+    depthWrite: isDepth || isSolid,
     depthTest: true,
+    depthFunc: THREE.LessEqualDepth,
+    // El prepass se aparta un pelo del pase visible para no pelear con el mate; el vidrio no
+    // escribe profundidad y con LessEqual dibuja sobre la misma superficie sin z-fighting.
+    polygonOffset: isDepth,
+    polygonOffsetFactor: isDepth ? 1 : 0,
+    polygonOffsetUnits: isDepth ? 1 : 0,
   });
 }
 
@@ -296,40 +326,53 @@ export function createOutfitLayer(
 ): OutfitLayerHandle {
   const materials: THREE.ShaderMaterial[] = [];
   const meshes: THREE.Mesh[] = [];
-  // El relleno entra en el pase opaco (antes que el cuerpo transparente) y escribe profundidad;
-  // las líneas van después del cuerpo holográfico para dibujar sobre la tela.
-  const orders = { fillBack: -6, fillFront: -5, lineBack: 1, lineFront: 2 };
+  const solidMeshes: THREE.Mesh[] = [];
+  // Prepass antes del cuerpo (-3/-2); mate antes que el trazo; vidrio y líneas después del cuerpo.
+  const orders = { depth: -7, solid: -5, glass: 1 };
 
   for (const garment of ["shirt", "pants"] as const) {
-    const color = (spec?.color ?? (garment === "shirt" ? TUNING.shirtColor : TUNING.pantsColor));
-    const fillBack = makeMaterial(garment, "fill", color, true);
-    const fillFront = makeMaterial(garment, "fill", color, false);
-    const lineBack = makeMaterial(garment, "line", color, true);
-    const lineFront = makeMaterial(garment, "line", color, false);
-    materials.push(fillBack, fillFront, lineBack, lineFront);
-    meshes.push(
-      makeLayerMesh(parent, geometry, fillBack, orders.fillBack),
-      makeLayerMesh(parent, geometry, fillFront, orders.fillFront),
-      makeLayerMesh(parent, geometry, lineBack, orders.lineBack),
-      makeLayerMesh(parent, geometry, lineFront, orders.lineFront)
-    );
+    const color = spec?.color ?? (garment === "shirt" ? TUNING.shirtColor : TUNING.pantsColor);
+    const depth = makeMaterial(garment, "depth", color);
+    const solid = makeMaterial(garment, "solid", color);
+    const glass = makeMaterial(garment, "glass", color);
+    materials.push(depth, solid, glass);
+    const depthMesh = makeLayerMesh(parent, geometry, depth, orders.depth);
+    const solidMesh = makeLayerMesh(parent, geometry, solid, orders.solid);
+    const glassMesh = makeLayerMesh(parent, geometry, glass, orders.glass);
+    meshes.push(depthMesh, solidMesh, glassMesh);
+    solidMeshes.push(solidMesh);
   }
 
   const base = layerHandle(parent, meshes, materials);
+  let visible = false;
+  let useSolid = false;
 
   const apply = (s: OutfitSpec | undefined) => {
     const detail = THREE.MathUtils.clamp(s?.detail ?? 0.5, 0, 1);
     const seed = s?.seed ?? 0;
+    useSolid = TUNING.solid > 0.5 || s?.material === "solid";
     for (const m of materials) {
       const garment = m.uniforms.uGarment.value as number;
       const color = s?.color ?? (garment < 0.5 ? TUNING.shirtColor : TUNING.pantsColor);
       m.uniforms.uColor.value.copy(hexToLinear(color));
       m.uniforms.uDetail.value = detail;
       m.uniforms.uSeed.value = seed;
+      m.uniforms.uSolid.value = useSolid ? 1 : 0;
     }
-    base.setVisible(!!s && s.enabled !== false);
+    visible = !!s && s.enabled !== false;
+    base.setVisible(visible);
+    // El mate solo se monta cuando se pide; el prepass y el vidrio están siempre activos.
+    for (const m of solidMeshes) m.visible = visible && useSolid;
   };
   apply(spec);
 
-  return { ...base, setSpec: apply };
+  return {
+    ...base,
+    setVisible(v: boolean) {
+      visible = v;
+      base.setVisible(v);
+      for (const m of solidMeshes) m.visible = v && useSolid;
+    },
+    setSpec: apply,
+  };
 }

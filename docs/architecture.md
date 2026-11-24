@@ -43,25 +43,26 @@ El prototipo incluye:
   el grosor fino con cualquier zoom. La piel de la cabeza vive en esa misma malla por encima del
   borde del cuello (y ≈ 67 cm), así que el shader se corta ahí y la cara queda limpia. `vocal` es
   además el look que articula los labios desde los articuladores del motor.
-- **Cuerpo base + ropa** (`Character.layers` en `src/scene.ts`): el cuerpo base es LUZ (holograma
-  de línea fina); la ropa (`outfit`, `src/layers/outfit.ts`) es MATERIA. Se dibuja en dos pases sobre
-  la misma malla del rig: un relleno mate opaco (`transparent: false`, `depthWrite: true`,
-  `renderOrder` -6/-5) que tapa al cuerpo holográfico solo en la sección cubierta, y un trazo
-  transparente (`depthWrite: false`, 0,05 cm por encima, `renderOrder` 1/2) para bordes, curvas y
-  costuras. El sombreado usa color base, difusa desde `normalize(vec3(-0.4,0.6,0.7))` en espacio de
-  vista, ambiente 0,35, fresnel suave y un halo azul del 25 % del azul de línea del cuerpo; la
-  conversión a sRGB es manual (`layerEncode`). Remera `#6c737a`, pantalón `#3c4249`, bordes
-  `#b8c0c8` con `uEdgeAlpha` = 0,8. La cintura ya no se dibuja como anillo/cinturón. `uSolid`
-  (por defecto 1) compara mate opaco con el antiguo vidrio (`uFill` = 0,18); en 0 el pase opaco se
-  descarta y el trazo recupera ese relleno. La cobertura se amplía solo en la capa para cerrar
-  entrepierna, axila y cadera, sin tocar `CLOTH_REGION_GLSL` ni `outfitCoverage()`. El recorte sigue
-  anclado a `aRest` (x delantero, y vertical, z lateral), así que la ropa sigue `body.turn` y los
-  gestos sin deslizarse; un guard en el cuello deja la cara y el lip-sync intactos. `detail` (0..1)
-  controla curvas, costuras y pliegues; `seed` fija su fase. Solo en DEV, `clothSolid`, `clothFill`,
-  `clothAlpha`, `clothEdge`, `clothOffset`, `shirtColor` y `pantsColor` (hex de seis dígitos, con o
-  sin `#`, con fallback) sobrescriben esos valores para ajustar sin recompilar. El pelo
-  (`src/layers/hair.ts`) queda como contrato de materia densa: hoy no dibuja nada. Los JSON sin
-  `layers` siguen funcionando como antes.
+- **Cuerpo base + ropa** (`Character.layers` en `src/scene.ts`): todo es LUZ. El cuerpo base es un
+  holograma de línea fina; la ropa (`outfit`, `src/layers/outfit.ts`) es vidrio emisivo con borde
+  luminoso, no plástico. Se separa OCULTAR de DIBUJAR: un prepass de profundidad (`colorWrite: false`,
+  `depthWrite: true`, `polygonOffset` 1/1, `renderOrder` -7) tapa el cuerpo detrás de la tela; el
+  pase visible de vidrio es transparente, sin `depthWrite`, `depthFunc: LessEqual`, solo caras
+  frontales (`renderOrder` 1). El acabado mate opaco sigue disponible con
+  `layers.outfit.material: "solid"` (`renderOrder` -5, difusa fija, ambiente 0,35, fresnel y halo
+  azul del 25 %). Conversión a sRGB manual (`layerEncode`) en todos los casos. Remera `#aeb9c3`,
+  pantalón `#66737f`, bordes `#d0d8df` con `uEdgeAlpha` = 0,85; relleno 0,22 en el centro y ≈0,50
+  en la silueta, halo azul del 30 % del azul de línea del cuerpo. `uSolid` por defecto 0; el DEV
+  `?clothSolid=1` y `material: "solid"` encienden el mate. Cintura sin anillo; el puño es un anillo
+  cerrado en `|z| = 30` alrededor del bíceps. La cobertura se amplía solo en la capa para cerrar
+  hombro, pantorrilla, entrepierna, axila y cadera, sin tocar `CLOTH_REGION_GLSL` ni
+  `outfitCoverage()`. El recorte sigue anclado a `aRest` (x delantero, y vertical, z lateral), así
+  que la ropa sigue `body.turn` y los gestos sin deslizarse; un guard en el cuello deja la cara y el
+  lip-sync intactos. `detail` (0..1) controla curvas, costuras y pliegues; `seed` fija su fase.
+  Solo en DEV, `clothSolid`, `clothFill`, `clothAlpha`, `clothEdge`, `clothOffset`, `shirtColor` y
+  `pantsColor` (hex de seis dígitos, con o sin `#`, con fallback) sobrescriben esos valores para
+  ajustar sin recompilar. El pelo (`src/layers/hair.ts`) comparte el lenguaje de luz; hoy no dibuja
+  nada. Los JSON sin `layers` siguen funcionando como antes.
 - **Estilos de cuerpo apartados**: `head-only` (solo la cabeza, sin cuerpo) queda en el esquema para
   escenas avanzadas y no se ofrece en la barra principal. `anatomic`, `ethereal` y `mesh` están
   marcados como `@deprecated`: `validateScene()` (`src/scene.ts`) los normaliza a `vocal` al importar,
@@ -76,17 +77,17 @@ El prototipo incluye:
 
 ### Reglas de las capas
 
-- Cabeza y cuerpo son LUZ: líneas finas y translúcidas de grosor constante en píxeles (`fwidth`).
-  Ropa y pelo son MATERIA: la tela es opaca, con difusa suave y halo azul tenue; sus líneas van en
-  un pase aparte sobre la superficie. Sin anillos repetidos: las horizontales solo son bordes de
-  prenda (cuello, puños, dobladillos, tobillo), curvas con la sección y nunca rectas.
+- Cabeza, cuerpo, ropa y pelo son LUZ: líneas finas y translúcidas de grosor constante en píxeles
+  (`fwidth`). La ropa es vidrio emisivo con un prepass que oculta el cuerpo; el mate opaco es una
+  opción por capa, no el default. Sin anillos repetidos: las horizontales solo son bordes de prenda
+  (cuello, puños, dobladillos, tobillo), curvas con la sección y nunca rectas.
 - La cabeza manda: ninguna capa tapa la cara ni la boca; el lip-sync sigue siendo el resultado de
   los articuladores de CHIMERA, no una animación propia de Quimera.
 - El código vive en `src/layers/`: `common.ts` (utilidades GLSL, regiones de recorte y ciclo de
   vida), `outfit.ts` (ropa) y `hair.ts` (contrato del hito siguiente). `RigScene.tsx` solo monta las
   capas, actualiza uniforms y libera materiales y meshes al desmontarse; la geometría es la del rig
   y la libera `RigView`.
-- `validateScene()` valida por capa `enabled`, `color`, `density` y `seed`, además de `detail` en la
+- `validateScene()` valida por capa `enabled`, `color`, `material`, `density` y `seed`, además de `detail` en la
   ropa y `length` en el pelo, con mensajes de error en español.
 
 ## Dependencia fijada
