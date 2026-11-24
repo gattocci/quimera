@@ -13,6 +13,7 @@ import {
   validateScene,
   type BodyStyle,
   type Character,
+  type OutfitLayer,
   type PostureHint,
   type Scene,
   type SceneBeat,
@@ -21,6 +22,7 @@ import {
   type StageAtmosphere,
 } from "./scene.ts";
 import { POSTURE_LABELS } from "./poses.ts";
+import { seedFromId } from "./layers/common.ts";
 
 type AppMode = "scene" | "studio" | "free";
 
@@ -182,6 +184,22 @@ export function SceneApp() {
       ...prev,
       characters: prev.characters.map((c) => (c.id === id ? { ...c, ...partial } : c)),
     }));
+  };
+
+  /** Activa/desactiva la ropa de un personaje o cambia su detalle, sin tocar las otras capas. */
+  const updateOutfit = (ch: Character, patch: Partial<OutfitLayer> | null) => {
+    const layers = { ...(ch.layers ?? {}) };
+    if (patch === null) {
+      delete layers.outfit;
+    } else {
+      layers.outfit = {
+        variant: "tee-pants",
+        seed: seedFromId(ch.id),
+        ...(layers.outfit ?? {}),
+        ...patch,
+      };
+    }
+    updateCharacter(ch.id, { layers });
   };
 
   const addCharacter = () => {
@@ -650,6 +668,43 @@ export function SceneApp() {
                             onChange={(e) => updateCharacter(ch.id, { color: e.target.value })}
                           />
                         </label>
+                      </div>
+
+                      <div className="quimera-char-card-row">
+                        <label className="quimera-field">
+                          Ropa
+                          <select
+                            value={ch.layers?.outfit ? "tee-pants" : "none"}
+                            onChange={(e) =>
+                              updateOutfit(
+                                ch,
+                                e.target.value === "none"
+                                  ? null
+                                  : {
+                                      variant: "tee-pants",
+                                      detail: ch.layers?.outfit?.detail ?? 0.5,
+                                      seed: ch.layers?.outfit?.seed ?? seedFromId(ch.id),
+                                    }
+                              )
+                            }
+                          >
+                            <option value="none">ninguna</option>
+                            <option value="tee-pants">remera + pantalón</option>
+                          </select>
+                        </label>
+                        {ch.layers?.outfit && (
+                          <label className="quimera-field">
+                            Detalle ({(ch.layers.outfit.detail ?? 0.5).toFixed(2)})
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.05"
+                              value={ch.layers.outfit.detail ?? 0.5}
+                              onChange={(e) => updateOutfit(ch, { detail: Number(e.target.value) })}
+                            />
+                          </label>
+                        )}
                       </div>
                     </div>
                   ))}

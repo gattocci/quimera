@@ -3,7 +3,7 @@
  *
  * Capabilities:
  * - Full character customization (voice body, base pitch f0, dialect, accent color, stageX, bodyStyle,
- *   optional `layers` for hair/outfit line-fields — schema only, not rendered yet).
+ *   optional `layers` for outfit (rendered) and hair (schema only for now)).
  * - Rich dialogue lines with posture/feeling hints and precise pause/beat timings.
  * - Global stage appearance:
  *     * bodyStyle: "vocal" (ghost silhouette + midline + sparse vertical contours), "head-only".
@@ -40,26 +40,44 @@ export type BodyStyle =
 export type StageAtmosphere = "void" | "grid" | "spotlight";
 
 /**
- * Capas agregadas sobre el cuerpo base. Cada capa es un campo de líneas finas (misma familia que
- * la cabeza), con su propia dirección, densidad y color de acento.
+ * Capas agregadas sobre el cuerpo base. Comparten el lenguaje de la cabeza y el cuerpo: líneas
+ * finas translúcidas, recortadas en coordenadas de reposo del rig (`aRest`).
  *
- * Solo esquema por ahora: el renderer todavía no las dibuja. Se validan para que los JSON ya
- * puedan declararlas sin romperse cuando se implementen.
+ * La ropa ya se dibuja (`src/layers/outfit.ts`); el pelo sigue siendo solo esquema hasta el
+ * siguiente hito. Los JSON sin `layers` funcionan exactamente como antes.
  */
 export type BodyLayerName = "hair" | "outfit";
 
+/** Campos comunes a todas las capas. */
 export interface BodyLayer {
   /** Si es false la capa existe pero no se dibuja. Por defecto true. */
   enabled?: boolean;
-  /** Color de acento en hex; si falta se usa el `color` del personaje. */
+  /** Color en hex; si falta, la ropa usa un gris neutro y el pelo usará el color del personaje. */
   color?: string;
-  /** Densidad relativa de líneas, 0 a 1 (por defecto 0.5). */
+  /** Densidad relativa de líneas, 0 a 1 (por defecto 0.5; reservado para el pelo). */
   density?: number;
-  /** Identificador de variante dentro de la capa (ej. "long", "tunic"). */
-  variant?: string;
+  /** Misma seed = mismo resultado entre recargas (fase de pliegues en la ropa). */
+  seed?: number;
 }
 
-export type CharacterLayers = Partial<Record<BodyLayerName, BodyLayer>>;
+/** Remera de manga corta + pantalón largo; `detail` controla curvas, costuras y pliegues. */
+export interface OutfitLayer extends BodyLayer {
+  variant?: "tee-pants";
+  /** 0 = silueta y bordes; 0.5 = + curvas; 1 = + costuras y pliegues. Por defecto 0.5. */
+  detail?: number;
+}
+
+/** Pelo corto o largo; `length` solo se usa en esta capa (renderer pendiente). */
+export interface HairLayer extends BodyLayer {
+  variant?: "short" | "long";
+  /** Longitud relativa, 0 a 1. Por defecto 0.5. */
+  length?: number;
+}
+
+export type CharacterLayers = {
+  hair?: HairLayer;
+  outfit?: OutfitLayer;
+};
 
 /** A character defined in the scene roster. */
 export interface Character {
@@ -79,7 +97,7 @@ export interface Character {
   stageX?: number;
   /** Custom body style per character (overrides scene default if set). */
   bodyStyle?: BodyStyle;
-  /** Capas agregadas sobre el cuerpo base (pelo, ropa). Opcional; aún sin render. */
+  /** Capas agregadas sobre el cuerpo base (ropa renderizada; pelo en esquema). Opcional. */
   layers?: CharacterLayers;
 }
 
@@ -154,6 +172,8 @@ export function lineVoiceParams(scene: Scene, line: SceneLine): {
 }
 
 const LAYER_NAMES = ["hair", "outfit"] as const;
+const OUTFIT_VARIANTS = ["tee-pants"] as const;
+const HAIR_VARIANTS = ["short", "long"] as const;
 
 function validateLayers(value: unknown, where: string): CharacterLayers | undefined {
   if (value === undefined) return undefined;
@@ -168,20 +188,58 @@ function validateLayers(value: unknown, where: string): CharacterLayers | undefi
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       throw new Error(`${where}: la capa "${name}" debe ser un objeto.`);
     }
-    const l = raw as BodyLayer;
-    if (l.enabled !== undefined && typeof l.enabled !== "boolean") {
-      throw new Error(`${where}: "${name}.enabled" debe ser booleano.`);
+    const l = raw as Record<string, unknown>;
+    const common: BodyLayer = {};
+    if (l.enabled !== undefined) {
+      if (typeof l.enabled !== "boolean") throw new Error(`${where}: "${name}.enabled" debe ser booleano.`);
+      common.enabled = l.enabled;
     }
-    if (l.color !== undefined && (typeof l.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(l.color))) {
-      throw new Error(`${where}: "${name}.color" debe ser un hex tipo #4fb6f2.`);
+    if (l.color !== undefined) {
+      if (typeof l.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(l.color)) {
+        throw new Error(`${where}: "${name}.color" debe ser un hex tipo #4fb6f2.`);
+      }
+      common.color = l.color;
     }
-    if (l.density !== undefined && (typeof l.density !== "number" || l.density < 0 || l.density > 1)) {
-      throw new Error(`${where}: "${name}.density" debe estar entre 0 y 1.`);
+    if (l.density !== undefined) {
+      if (typeof l.density !== "number" || l.density < 0 || l.density > 1) {
+        throw new Error(`${where}: "${name}.density" debe estar entre 0 y 1.`);
+      }
+      common.density = l.density;
     }
-    if (l.variant !== undefined && typeof l.variant !== "string") {
-      throw new Error(`${where}: "${name}.variant" debe ser texto.`);
+    if (l.seed !== undefined) {
+      if (typeof l.seed !== "number" || !Number.isInteger(l.seed)) {
+        throw new Error(`${where}: "${name}.seed" debe ser un número entero.`);
+      }
+      common.seed = l.seed;
     }
-    out[name as BodyLayerName] = l;
+
+    if (name === "outfit") {
+      if (l.variant !== undefined && !OUTFIT_VARIANTS.includes(l.variant as "tee-pants")) {
+        throw new Error(`${where}: "outfit.variant" desconocido "${String(l.variant)}". Opciones: tee-pants.`);
+      }
+      if (l.detail !== undefined && (typeof l.detail !== "number" || l.detail < 0 || l.detail > 1)) {
+        throw new Error(`${where}: "outfit.detail" debe estar entre 0 y 1.`);
+      }
+      if (l.length !== undefined) throw new Error(`${where}: "outfit.length" solo aplica a la capa de pelo.`);
+      out.outfit = {
+        ...common,
+        ...(l.variant !== undefined ? { variant: l.variant as "tee-pants" } : {}),
+        ...(l.detail !== undefined ? { detail: l.detail as number } : {}),
+      };
+    } else {
+      if (l.variant !== undefined && !HAIR_VARIANTS.includes(l.variant as "short" | "long")) {
+        throw new Error(`${where}: "hair.variant" desconocido "${String(l.variant)}". Opciones: short, long.`);
+      }
+      if (l.length !== undefined && (typeof l.length !== "number" || l.length < 0 || l.length > 1)) {
+        throw new Error(`${where}: "hair.length" debe estar entre 0 y 1.`);
+      }
+      if (l.detail !== undefined) throw new Error(`${where}: "hair.detail" solo aplica a la capa de ropa.`);
+      out.hair = {
+        ...common,
+        ...(l.variant !== undefined ? { variant: l.variant as "short" | "long" } : {}),
+        ...(l.length !== undefined ? { length: l.length as number } : {}),
+      };
+    }
   }
   return out;
 }
@@ -284,6 +342,7 @@ export const DIALOGUE_SCENE: Scene = {
       f0: 210,
       color: "#4fb6f2",
       stageX: -46,
+      layers: { outfit: { variant: "tee-pants", detail: 0.5, seed: 11 } },
     },
     {
       id: "dante",
@@ -294,6 +353,7 @@ export const DIALOGUE_SCENE: Scene = {
       f0: 115,
       color: "#ffb347",
       stageX: 46,
+      layers: { outfit: { variant: "tee-pants", detail: 0.5, seed: 29 } },
     },
   ],
   events: [

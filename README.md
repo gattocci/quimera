@@ -5,8 +5,9 @@ el motor de voz y su cabeza completa, incluido el tracto vocal animado y el lip-
 añade el escenario, el body rig posable y la orquestación de escenas.
 
 El prototipo actual incluye:
-- **Estética aprobada por defecto**: cabeza anatómica limpia en modo `vocal` con un cuerpo base "fantasma": silueta fina, una línea media con acento rosa/rojo en el pecho (el equivalente al corte por el entrecejo de la cabeza) y pocas curvas verticales de contorno que dan volumen al orbitar la cámara. Sin malla, anillos ni relleno; cortado en el cuello para que la cara no tenga franjas. Es la capa base: pelo y ropa se agregarán encima como campos de líneas finas (`layers` en el esquema, aún sin render). `head-only` queda como opción avanzada; `anatomic`, `ethereal` y `mesh` son legacy y se normalizan a `vocal` al importar un JSON.
-- **Estudio Creativo interactivo**: creador de personajes (voz, tono f0, dialecto, posición X, color) y editor de diálogo en tiempo real.
+- **Estética aprobada por defecto**: cabeza anatómica limpia en modo `vocal` con un cuerpo base "fantasma": silueta fina, una línea media con acento rosa/rojo en el pecho (el equivalente al corte por el entrecejo de la cabeza) y pocas curvas verticales de contorno que dan volumen al orbitar la cámara. Sin malla, anillos ni relleno; cortado en el cuello para que la cara no tenga franjas. `head-only` queda como opción avanzada; `anatomic`, `ethereal` y `mesh` son legacy y se normalizan a `vocal` al importar un JSON.
+- **Ropa sobre el cuerpo** (`Character.layers.outfit`): remera gris de manga corta y pantalón largo dibujados como una segunda piel con el mismo trazo que la cabeza, anclada al reposo del rig para que siga los gestos. `detail` (0 a 1) añade progresivamente curvas, costuras y pliegues; `seed` fija el resultado entre recargas. El pelo (`layers.hair`) está en el esquema, pero todavía no se dibuja.
+- **Estudio Creativo interactivo**: creador de personajes (voz, tono f0, dialecto, posición X, color, ropa `ninguna / remera + pantalón` y su slider de detalle) y editor de diálogo en tiempo real.
 - **Sentimientos y posturas**: réplicas con intención corporal (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).
 - **Cámara 3D libre**: órbita 360°, zoom hacia los órganos vocales y recentrado automático.
 - **Atmósferas escénicas**: modos de iluminación (*Vacío, Rejilla, Foco cenital*).
@@ -32,7 +33,7 @@ git submodule update --init --recursive
 ```
 
 Abre la URL que imprime Vite y pulsa **Hablar** (modo Libre) o **Reproducir escena** (modo Escena)
-para iniciar el audio. El prototipo muestra la cabeza 3D original de CHIMERA con la cara limpia y un cuerpo base tenue con su misma línea.
+para iniciar el audio. El prototipo muestra la cabeza 3D original de CHIMERA con la cara limpia, un cuerpo base tenue con su misma línea y, en el diálogo incluido, la remera y el pantalón sobre ese cuerpo.
 
 ## Estructura
 

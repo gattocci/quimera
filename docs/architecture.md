@@ -43,23 +43,42 @@ El prototipo incluye:
   el grosor fino con cualquier zoom. La piel de la cabeza vive en esa misma malla por encima del
   borde del cuello (y ≈ 67 cm), así que el shader se corta ahí y la cara queda limpia. `vocal` es
   además el look que articula los labios desde los articuladores del motor.
-- **Cuerpo base + capas** (`Character.layers` en `src/scene.ts`): el cuerpo base es deliberadamente
-  mínimo para que cualquier capa encima lo lea bien. Pelo y ropa serán campos de líneas finas
-  (miles de trazos casi paralelos con densidad variable, translúcidos, con brillo; la referencia
-  es el pelo del video de estilo) en un solo buffer `LineSegments`, activables por personaje. El
-  esquema ya los valida (`hair`, `outfit`; `enabled`, `color`, `density`, `variant`) pero el
-  renderer aún no los dibuja.
+- **Cuerpo base + ropa** (`Character.layers` en `src/scene.ts`): el cuerpo base es deliberadamente
+  mínimo. La ropa (`outfit`, `src/layers/outfit.ts`) es una "segunda piel" apenas desplazada a lo
+  largo de la normal del rig (`uOffset` ≈ 1,1 cm), dibujada con la misma familia de líneas finas,
+  translúcidas y de grosor en píxeles: silueta, bordes de prenda y pocas curvas verticales, sin
+  relleno ni anillos. El recorte usa las coordenadas de reposo (`aRest`: x delantero, y vertical,
+  z lateral), así que remera y pantalón siguen `body.turn` y los gestos sin deslizarse. El cuerpo
+  baja su alpha donde hay tela (`uClothMask`) para no duplicar trazos, y un guard en el cuello deja
+  la cara y el lip-sync intactos. `detail` (0..1) controla un único sistema de curvas, costuras y
+  pliegues; `seed` fija su fase entre recargas. El pelo (`src/layers/hair.ts`) queda de momento como
+  contrato y esquema (`short`/`long`, `length`) para el siguiente hito: no dibuja nada todavía.
+  Los JSON sin `layers` siguen funcionando como antes.
 - **Estilos de cuerpo apartados**: `head-only` (solo la cabeza, sin cuerpo) queda en el esquema para
   escenas avanzadas y no se ofrece en la barra principal. `anatomic`, `ethereal` y `mesh` están
   marcados como `@deprecated`: `validateScene()` (`src/scene.ts`) los normaliza a `vocal` al importar,
   así que un JSON antiguo no puede reactivar los anillos ni la malla completa que se rechazaron.
 - **Estudio Creativo integrado** (`src/SceneApp.tsx`):
-  - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario y color de acento.
+  - *Editor de personajes*: configuración de nombre, cuerpo de voz (`female`, `male`, `child`), tono base $f_0$, dialecto, posición X en el escenario, color de acento y ropa (`ninguna` / `remera + pantalón`) con su slider de detalle.
   - *Editor de guiones y sentimientos*: agregar, editar, reordenar y eliminar líneas y pausas; asignación de actitudes por réplica (*curioso, enfático, pensativo, acuerdo, atento, relajado, gesticulando*).
 - **Atmósferas escénicas**: modos *Vacío* (negro profundo de alto contraste), *Rejilla* (cibernético) y *Foco* (iluminación cenital).
 - **Cámara interactiva** (`OrbitControls`): rotación 360°, zoom hacia los órganos vocales y recentrado con un clic.
 - **Dialectos y síntesis**: español con dialectos (neutro, rioplatense, castellano) y compatibilidad con inglés y turco.
 - **Formato y serialización**: importación y exportación inmediata en formato JSON estándar.
+
+### Reglas de las capas
+
+- Misma familia que la cabeza y el cuerpo: líneas finas y translúcidas, grosor constante en píxeles
+  (`fwidth`), sin superficies, mallas ni anillos repetidos. Las horizontales solo son bordes de
+  prenda (cuello, puños, dobladillos).
+- La cabeza manda: ninguna capa tapa la cara ni la boca; el lip-sync sigue siendo el resultado de
+  los articuladores de CHIMERA, no una animación propia de Quimera.
+- El código vive en `src/layers/`: `common.ts` (utilidades GLSL, regiones de recorte y ciclo de
+  vida), `outfit.ts` (ropa) y `hair.ts` (contrato del hito siguiente). `RigScene.tsx` solo monta las
+  capas, actualiza uniforms y libera materiales y meshes al desmontarse; la geometría es la del rig
+  y la libera `RigView`.
+- `validateScene()` valida por capa `enabled`, `color`, `density` y `seed`, además de `detail` en la
+  ropa y `length` en el pelo, con mensajes de error en español.
 
 ## Dependencia fijada
 

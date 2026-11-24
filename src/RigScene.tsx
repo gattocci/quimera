@@ -7,7 +7,8 @@
  *      * "vocal" (default): a quiet "ghost" body in CHIMERA's blue — a faint silhouette outline plus
  *        a few sparse vertical contour curves (a bright warm midline, like the cut through the head)
  *        so it reads when the camera orbits. No grid, no fill, no rings; cut at the neck rim so the
- *        face stays clean. It is the base layer: hair/outfit line-fields are meant to sit on top.
+ *        face stays clean. It is the base layer: a gray tee + pants (Character.layers.outfit) sits
+ *        on top; hair is reserved for the next stage.
  *      * "head-only": pure CHIMERA standalone head, no body at all (advanced scenes).
  *   Legacy body styles are normalized to "vocal" by validateScene() and render as "vocal" here.
  *  - The approved presentation is head look "vocal": the CHIMERA anatomical head with its lips
@@ -26,6 +27,9 @@ import { engine } from "@chimera/audio/AudioEngine.ts";
 import { useStore } from "@chimera/ui/store.ts";
 import type { BodyStyle, Character, PostureHint } from "./scene.ts";
 import { POSTURE_PRESETS, listeningPose, lerpPose, clonePose } from "./poses.ts";
+import { CLOTH_REGION_GLSL, type LayerHandle } from "./layers/common.ts";
+import { createOutfitLayer, type OutfitLayerHandle, type OutfitSpec } from "./layers/outfit.ts";
+import { createHairLayer, type HairSpec } from "./layers/hair.ts";
 import type { Pose } from "@chimera/rig/pose.ts";
 
 export type HeadLookName = "classic" | "vocal" | "skinned" | "outside";
@@ -53,6 +57,12 @@ interface PerformerInstance {
   view: any;
   vocalMat: THREE.ShaderMaterial;
   vocalBackMat: THREE.ShaderMaterial;
+  outfit: OutfitLayerHandle;
+  hair: LayerHandle;
+  outfitSpec?: OutfitSpec;
+  hairEnabled: boolean;
+  layerSignature: string;
+  styleVisible: boolean;
   skinned: Float32Array;
   currentPose: Pose;
   targetPose: Pose;
@@ -82,7 +92,8 @@ interface PerformerInstance {
  * cualquier zoom y no forman manchas donde la superficie es tangente al plano de corte.
  *
  * La piel facial vive en esta misma malla por encima del cuello (y ≈ 67 cm): el dibujo se corta
- * ahí y la cara queda limpia. Es la capa base: pelo y ropa irán encima como campos de líneas.
+ * ahí y la cara queda limpia. Es la capa base: la ropa se dibuja encima como segunda piel y el
+ * pelo queda para el siguiente hito.
  */
 const VOCAL_VERT = /* glsl */ `
 attribute vec3 aRest;
@@ -112,9 +123,12 @@ uniform float uStepX;
 uniform float uStepZ;
 uniform float uPx;
 uniform float uTorsoDepth;
+uniform float uClothMask; // baja el alpha del cuerpo donde hay prenda (0 si no hay ropa)
 varying vec3 vN;
 varying vec3 vV;
 varying vec3 vRest;
+
+${CLOTH_REGION_GLSL}
 
 // Línea de grosor constante en píxeles sobre el corte c = k·step.
 float slice(float c, float step) {
@@ -156,7 +170,9 @@ void main() {
   float fade = smoothstep(uFadeBottom, uFadeTop, vRest.y);
   float headCut = 1.0 - smoothstep(uHeadCutBottom, uHeadCutTop, vRest.y);
   float a = max(max(wMid, wCut), wOut);
-  float alpha = uAlpha * fade * headCut * a * (uBack > 0.5 ? 0.35 : 1.0);
+  // La ropa dibuja su propia silueta encima: atenuamos el cuerpo bajo la tela para no duplicar líneas.
+  float bare = 1.0 - uClothMask * outfitCoverage(vRest);
+  float alpha = uAlpha * fade * headCut * a * bare * (uBack > 0.5 ? 0.35 : 1.0);
   if (alpha < 0.008) discard;
   gl_FragColor = vec4(col, alpha);
 }
@@ -203,6 +219,7 @@ function createVocalBodyMaterial(back = false) {
       uStepZ: { value: 26 }, // cm entre cortes perpendiculares a z (laterales)
       uPx: { value: 1.4 }, // grosor de línea en píxeles
       uTorsoDepth: { value: 13 }, // cm: semiprofundidad del torso; fuera, la línea media se apaga
+      uClothMask: { value: 0 }, // lo activa syncLayers() cuando el personaje lleva ropa
     },
     transparent: true,
     side: back ? THREE.BackSide : THREE.FrontSide,
@@ -254,6 +271,25 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
     let disposed = false;
     let performers: PerformerInstance[] = [];
     let animId = 0;
+
+    // Las capas solo se montan una vez por personaje; aquí se actualizan sus uniforms al editarlas.
+    const layerSignature = (ch: Character) => JSON.stringify(ch.layers ?? {});
+    const syncLayerVisibility = (p: PerformerInstance) => {
+      const dressed = p.styleVisible && !!p.outfitSpec && p.outfitSpec.enabled !== false;
+      p.outfit.setVisible(dressed);
+      p.hair.setVisible(p.styleVisible && p.hairEnabled);
+      p.vocalMat.uniforms.uClothMask.value = dressed ? 0.85 : 0;
+      p.vocalBackMat.uniforms.uClothMask.value = dressed ? 0.6 : 0;
+    };
+    const syncLayers = (p: PerformerInstance, ch: Character) => {
+      const signature = layerSignature(ch);
+      if (signature === p.layerSignature) return;
+      p.layerSignature = signature;
+      p.outfitSpec = ch.layers?.outfit;
+      p.hairEnabled = !!ch.layers?.hair && ch.layers.hair.enabled !== false;
+      p.outfit.setSpec(p.outfitSpec);
+      syncLayerVisibility(p);
+    };
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -362,6 +398,14 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
         group.position.set(posX, 0, 0);
         scene.add(group);
 
+        // Capas sobre la misma geometría del rig (con `aRest`): siguen el pose sin buffers propios.
+        const outfit = createOutfitLayer(
+          group,
+          frontMesh.geometry as THREE.BufferGeometry,
+          ch.layers?.outfit as OutfitSpec | undefined
+        );
+        const hair = createHairLayer(group, ch.layers?.hair as HairSpec | undefined);
+
         const initialPose = clonePose(POSTURE_PRESETS.neutral);
         initialPose.body.turn = baseTurn;
         rig.pose(initialPose);
@@ -377,14 +421,20 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
           view,
           vocalMat,
           vocalBackMat,
+          outfit,
+          hair,
+          hairEnabled: false,
+          layerSignature: "",
+          styleVisible: true,
           skinned,
           currentPose: clonePose(initialPose),
           targetPose: clonePose(initialPose),
           baseTurn,
         };
 
-        // Apply initial body style
+        // Apply initial body style and the character's layers (outfit by default in DIALOGUE_SCENE).
         applyBodyStyle(pInstance, bodyStyleRef.current);
+        syncLayers(pInstance, ch);
         performers.push(pInstance);
       }
 
@@ -430,6 +480,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
 
         for (let i = 0; i < performers.length; i++) {
           const p = performers[i];
+          const chNow = charactersRef.current[i];
+          if (chNow) syncLayers(p, chNow);
           const isCurrentSpeaker = hasSpeaker && p.id === activeId;
           const isSolo = performers.length === 1;
 
@@ -498,6 +550,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       if (style === "head-only") {
         view.group.visible = false;
         view.showBones = false;
+        p.styleVisible = false;
+        syncLayerVisibility(p);
         return;
       }
 
@@ -509,6 +563,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       backMesh.material = p.vocalBackMat;
       backMesh.visible = true;
       view.showBones = false;
+      p.styleVisible = true;
+      syncLayerVisibility(p);
     }
 
     initScene().catch((err) => {
@@ -540,6 +596,8 @@ export const RigScene = forwardRef<RigSceneHandle, RigSceneProps>(function RigSc
       unsubTele();
       ro.disconnect();
       for (const p of performers) {
+        p.outfit.dispose(); // libera sus materiales; la geometría es del rig y la libera view.dispose()
+        p.hair.dispose();
         p.head.dispose();
         p.view.dispose();
         p.vocalMat.dispose();
